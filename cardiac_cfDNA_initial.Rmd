@@ -1,5 +1,5 @@
 ---
-title: "WGBS data analysis on cardiac cfDNA"
+title: "WGBS data analysis on cardiac ccfDNA"
 author: "Katarzyna Wreczycka"
 output:
   html_notebook:
@@ -13,7 +13,7 @@ date: "`r Sys.Date()`"
 
 ---
 
-Samples aligned using trim_galore+bwa_meth+methyldacker, using a snakemake pipeline:
+Samples were aligned using trim_galore + bwa_meth + methyldackel, using a snakemake pipeline:
 github.com/katwre/makeWGBSnake/tree/db59d9bf5b1cbc286329fc46d4ccb724b60e507d
 config files:
 1. first and the second batch
@@ -22,8 +22,31 @@ https://github.com/katwre/makeWGBSnake/blob/db59d9bf5b1cbc286329fc46d4ccb724b60e
 https://github.com/katwre/makeWGBSnake/blob/db59d9bf5b1cbc286329fc46d4ccb724b60e507d/Config_files/cardiac_hg38_slimdisk.yaml
 
 
-```{r,results='asis'}
+# GOAL
+The aim of this script is to compare the differential methylation (DM) between diseased patients with differentent severity of heart disease.
 
+# Libraries
+Load libraries and define directories
+```{r}
+library(methylKit)
+library(data.table)
+library(genomation)
+library(pheatmap)
+library(ggplot2)
+library(knitr)
+library(circlize)
+library(RColorBrewer)
+library(ComplexHeatmap)
+
+p06_methyl_calls="/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/"
+PLOTS="/local/AAkalin_cardiac/Results/cardiac/Plots/"
+RDS.outpath="/local/AAkalin_cardiac/Results/cardiac/RDS/"
+dbdir.dm='/local/AAkalin_cardiac/Results/cardiac/differential_methylation/'
+out.dir="/local/AAkalin_cardiac/Results/cardiac/Plots/DM/"
+```
+
+Create metadata table
+```{r,results='asis'}
 sample_ids = c(
  'N1', # control
  'N2',
@@ -88,31 +111,14 @@ TBL = data.frame(sample_ids=sample_ids,
                  treatment_descr=treatment_descr,
                  treatment=treatment,
                  stringsAsFactors = FALSE)
-library(knitr)
+
 kable(TBL, caption="Description of cardiac cfDNA samples")
 
 ```
 
 # Alignment, coverage, and methylation statistics
 
-
-Load libraries and get directories.
-```{r}
-library(methylKit)
-library(data.table)
-library(genomation)
-library(pheatmap)
-library(ggplot2)
-
-p06_methyl_calls="/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/"
-PLOTS="/local/AAkalin_cardiac/Results/cardiac/Plots/"
-RDS.outpath="/local/AAkalin_cardiac/Results/cardiac/RDS/"
-dbdir.dm='/local/AAkalin_cardiac/Results/cardiac/differential_methylation/'
-
-
-```
-
-Functions.
+Functions
 ```{r}
 
 my.read.Tabix = function( dbpath,
@@ -158,7 +164,6 @@ percMethylation.methylKit = function(dt, methylBase, rowids=TRUE){
 
 Read methylation files for each sample and get 
 objects that only bases with coverage from all samples are retained.
-
 ```{r}
 
 # tabix.files.dt=lapply(sample_ids, function(s){
@@ -496,11 +501,9 @@ meth.deT=methylKit:::readMethylBaseDB(methT.path,"tabix",
                  "region",treatment,TRUE,skip=0)
 ```
 
-PCA analysis.
-
+Make PCA from raw counts and from most differentially methylated tiles. Calculate methylation [%].
 ```{r}
-
-# using methylKit functions.
+# using methylKit functions
 options(scipen=999)
 pdf("/local/AAkalin_cardiac/Results/cardiac/Plots/PCA/PCASamples_123batch.pdf")
 PCASamples(meth.deT)
@@ -575,7 +578,7 @@ dev.off()
 ```
 
 # Differential methylation
-
+Calculate differential methylation of each disease condition compared to healthy controls.
 ```{r}
 
 # for(treat in c("ACS/Stemi","ACS/Nstemi" ,"ACS/iAP","CAD+posStressEcho")){
@@ -620,12 +623,14 @@ lapply(c("ACS/Stemi","ACS/Nstemi" ,"ACS/iAP","CAD+posStressEcho"),
                      skip=0)
   })
 
+#Default test used for qvalue calculation is SLIM
 myDiff25p_tiled_list = lapply(dmc_treat, function(muDiff){
   getMethylDiff(muDiff,difference=25,qvalue=0.01,save.db = FALSE)
 }); names(myDiff25p_tiled_list)=c("ACS/Stemi","ACS/Nstemi" ,"ACS/iAP","CAD+posStressEcho")
 #saveRDS(myDiff25p_tiled_list, 
 #       paste0(RDS.outpath, "myDiff25p_tiled_list.RDS"))
 
+#Calculate DMR counts per chromosome
 get.nbr.DMCs.per.chr = function(list.of.methylDiffDB,
                                 SUBROUPS_VAR){
   chroms = c(paste0("chr", 1:22), "chrX", "chrY")
@@ -718,16 +723,11 @@ subtypes.DMCtiled.means.l = lapply(1:length(myDiff25p_tiled_list),
 
 subtypes.DMCtiled.means = do.call("rbind", subtypes.DMCtiled.means.l)
 subtypes.DMCtiled.means=subtypes.DMCtiled.means*100
+
 # saveRDS(subtypes.DMCtiled.means, 
 #   paste0(RDS.outpath,"subtypes.DMCtiled.means.RDS"))
 # saveRDS(mat.coo.gr, 
 #   paste0(RDS.outpath,"subtypes.DMCtiled.means.coordinates.RDS"))
-
-library(circlize)
-library(RColorBrewer)
-library(ComplexHeatmap)
-
-
 
 #pdf(paste0(dbdir.dm,"Diffmeth_heatmap_rowannot_rowsgrouping.pdf"), width=9)
 
@@ -766,9 +766,6 @@ Heatmap(as.matrix(subtypes.DMCtiled.means),
 
 
 # Heatmap without CAD subgroup
-
-
-out.dir="/local/AAkalin_cardiac/Results/cardiac/Plots/DM/"
 pdf(paste0(out.dir,"Diffmeth_heatmap_rowannot_norowsgrouping_noCAD.pdf"), width=9)
 
 
@@ -780,7 +777,7 @@ subtypes.DMCtiled.means.noCAD=subtypes.DMCtiled.means.noCAD*100
 subtypes.DMCtiled.means.noCAD = subtypes.DMCtiled.means.noCAD[,-which(TBL$treatment_descr=="CAD+posStressEcho")]
 colnames(subtypes.DMCtiled.means.noCAD) = TBL.noCAD$sample_ids
 
-# could you please re-plot the figure replacing ACS_iAP for ACS_UA ? iAP is german for unstable angina, and in the literature UA is the most used way
+# Replacing ACS_iAP for ACS_UA as iAP is German for unstable angina, and in the literature UA is the most used way
 TBL.noCAD$treatment_descr[which(TBL.noCAD$treatment_descr=="ACS/iAP")]="ACS_UA"
 TBL.noCAD$treatment_descr[which(TBL.noCAD$treatment_descr=="ACS/Nstemi")]="ACS_Nstemi"
 TBL.noCAD$treatment_descr[which(TBL.noCAD$treatment_descr=="ACS/Stemi")]="ACS_Stemi"
@@ -817,8 +814,6 @@ Heatmap(x,
   col=mycol
   )
 dev.off()
-
-
 ```
 
 
@@ -826,11 +821,10 @@ dev.off()
 # Annotation of DMCs
 
 ```{r, echo = TRUE, out.width="110%"}
-library(genomation)
-
 ## - Cpg islands
 cpg_islands = readGeneric("/local/AAkalin_cardiac/Base/Annotation/hg38/cpgIslandExt_hg38.bed") # on beast
 cpg_islands$name="cpgi"
+
 ## - Cpg shores
 # extract the shore defined by 2000 bp upstream of cpg islands
 shore1=flank(cpg_islands, 2000)
@@ -841,6 +835,7 @@ shore1_2=GenomicRanges::reduce(c(shore1,shore2))
 # extract the features (ranges) that are present in shores only and not in cpg_islands (ie., shores not overlapping islands)
 cpgi_shores=GenomicRanges::setdiff(shore1_2, cpg_islands)
 cpgi_shores$name="shore"
+
 ## - Cpg shelves
 # extract the shore defined by 4000 bp upstream of cpg islands
 shelves1=flank(cpg_islands, 4000)
@@ -853,6 +848,7 @@ island_shores=c(cpg_islands, cpgi_shores)
 # extract the features (ranges) that are present in shelves only and not in cpg_islands  or shores(ie., shelves not overlapping islands or shores)
 cpgi_shelves=GenomicRanges::setdiff(shelves1_2, island_shores)
 cpgi_shelves$name="shelf"
+
 # annotate the CpGs  for the genomic location (promoter, exon, intron, enhancer etc)
 bed.file = "/local/AAkalin_cardiac/Base/Annotation/hg38/refseq.genes.hg38.bed"
 gene.parts = readTranscriptFeatures(bed.file)
@@ -881,10 +877,8 @@ dmc_treat.annot_25p0_01q = lapply(myDiff25p_tiled_list, function(dmcs){
 annotateWithFeatures(as(dmcs, "GRanges"), as(myfeat, "GRangesList"), intersect.chr=TRUE)
 })
 
-
-out.dir="/local/AAkalin_cardiac/Results/cardiac/Plots/DM/"
+#percMeth heatmap
 pdf(paste0(out.dir, "annot.perc.myDiff25p0_01p_CpG_dT_tiles_win500bp_step500bp_batch123_noCAD.pdf"))
-library(pheatmap)
 mat.DMCpairwise.annot.perc = do.call("cbind", lapply(1:length(dmc_treat.annot_25p0_01q), 
   function(i) dmc_treat.annot_25p0_01q[[i]]@annotation))
 #colnames(mat.DMCpairwise.annot.perc) = c("ACS/Stemi","ACS/Nstemi" ,"ACS/iAP","CAD+posStressEcho")
@@ -894,9 +888,8 @@ mat.DMCpairwise.annot.perc = mat.DMCpairwise.annot.perc[,1:3]
 pheatmap(mat.DMCpairwise.annot.perc, cluster_rows=FALSE, cluster_cols=TRUE)
 dev.off()
 
-
+#numbers heatmap
 pdf(paste0(out.dir, "annot.num.myDiff25p0_01p_CpG_dT_tiles_win500bp_step500bp_batch123_noCAD.pdf"))
-library(pheatmap)
 mat.DMCpairwise.annot.perc = do.call("cbind", lapply(1:length(dmc_treat.annot_25p0_01q), 
   function(i) dmc_treat.annot_25p0_01q[[i]]@num.annotation))
 #colnames(mat.DMCpairwise.annot.perc) = c("ACS/Stemi","ACS/Nstemi" ,"ACS/iAP","CAD+posStressEcho")
@@ -909,6 +902,7 @@ dev.off()
 
 dmrs.names=c("ACS_Stemi","ACS_Nstemi" ,"ACS_iAP","CAD_posStressEcho")
 
+#barplots of DMRs overlapping with features (percMeth)
 pdf(paste0(out.dir, 'annot.perc.myDiff25p0_01p_CpG_dT_tiles_win500bp_step500bp_batch123.pdf'))
     for(i in 1:length(dmc_treat.annot_25p0_01q)){
     
@@ -926,6 +920,7 @@ pdf(paste0(out.dir, 'annot.perc.myDiff25p0_01p_CpG_dT_tiles_win500bp_step500bp_b
     }
 dev.off()
 
+#barplots of DMRs overlapping with features (numbers)
 pdf(paste0(out.dir, 'annot.nbr.myDiff25p0_01p_CpG_dT_tiles_win500bp_step500bp_batch123.pdf'))
    for(i in 1:length(dmc_treat.annot_25p0_01q)){
 
@@ -941,9 +936,12 @@ pdf(paste0(out.dir, 'annot.nbr.myDiff25p0_01p_CpG_dT_tiles_win500bp_step500bp_ba
   print(p)
 }
 dev.off()
+```
 
+# GREAT Analysis
 
-
+Associate biological functions to genomic regions.
+```{r, echo = TRUE, out.width="110%"}
 liftOver.hg38_to_hg19 = function(mycur){
   require(rtracklayer)
   #require(liftOver) #Failed with error:  ‘‘liftOver’ is not a valid installed package’; #TODO: I got this error, that's why I use import.chain function below
@@ -1087,7 +1085,7 @@ include_graphics(enrichrplots, dpi = 300)
 
 ```
 
-
+#To my impression the following chunk is a replication without column and rownamesof the DMRs heatmap chunk and should be deleted
 # Heatmap of DMRs
 ```{r}
 
@@ -1141,9 +1139,7 @@ subtypes.DMCtiled.means=subtypes.DMCtiled.means*100
 # saveRDS(mat.coo.gr, 
 #   paste0(RDS.outpath,"subtypes.DMCtiled.means.coordinates.RDS"))
 
-library(circlize)
-library(RColorBrewer)
-library(ComplexHeatmap)
+
 #pdf(paste0(dbdir.dm,"Diffmeth_heatmap_rowannot_rowsgrouping.pdf"), width=9)
 
 meth.max = if (max(subtypes.DMCtiled.means)==1) 1 else 100
