@@ -17,6 +17,9 @@ output:
 The aim of this script is to compare if there is a systemic bias between WGBS processed samples and targeted sequenced samples and to remove it.
 Also, the targeted sequencing data functions as validation cohort for the DMRs identified from the discovery cohort.
 
+# Conclusion
+The sequencing bias could best be removed by combining a quantile normalisation with a ComBat adjustment.Further approaches e.g. winsorization have been also tested in this script.
+
 ## Load Libraries
 ```{r Load_libraries, warning=FALSE, error=FALSE, message=FALSE}
 library(tidyverse)
@@ -1229,14 +1232,6 @@ p65 <- unique_DM_perc_meth_pca %>%
 annotate_figure(ggarrange(p63, p64 , nrow=1, ncol=2, labels="AUTO"), text_grob("Backtransformed, Quantile Normalised and ComBat\nAll unique DM Tiles", face = "bold", size=16))
 
 p65
-
-
-
-
-
-
-
-
 ```
 
 #### Compare difference of means per condition scatterplot and boxplot DM
@@ -1469,45 +1464,7 @@ p66 <- compare_discovery_validation %>%
 p66
 ```
 
-
-```{r Original_Code_Chunk_from_above_not_valid_anymore}
-# compare_discovery_validation <- overlap_DM_log_normalised_combat_log_fold_change_no_log_mean_diff_qvalues %>% 
-#   dplyr::rename(meth.diff.WGBS.validation = meth.diff.WGBS, meth.diff.targeted.validation=meth.diff.targeted, threshold_25_validation=threshold_25, threshold_25_qvalue_discovery=threshold_25_qvalue) %>% 
-#   dplyr::left_join(dplyr::select(data_for_scatterplot,  seqnames, start, end, group, meth.diff.y), by = c("chrom"="seqnames", "start", "end", "condition"="group")) %>% 
-#   dplyr::rename(meth.diff.WGBS.discovery=meth.diff.y) %>% 
-#   dplyr::mutate(threshold_25_cohort_comparison = ifelse((meth.diff.WGBS.discovery >= 25 & meth.diff.targeted.validation >= 25 | meth.diff.WGBS.discovery <= -25 & meth.diff.targeted.validation <= -25), "DMR validated", "DMR not validated"))
-# 
-# p66 <- compare_discovery_validation %>% mutate(threshold_25_cohort_comparison = if_else(threshold_25_cohort_comparison == "DMR not validated", "not validated  ", "validated")) %>%
-#   ggplot(aes(x = meth.diff.targeted.validation, y = meth.diff.WGBS.discovery, colour=threshold_25_cohort_comparison)) +
-#   geom_point(shape = 16, alpha=0.6, size=1) +
-#   geom_vline(xintercept = c(-25, 25), linetype="dotted")+
-#   geom_hline(yintercept = c(-25, 25), linetype="dotted")+
-#   ylab("\u0394 Methylation [%]\nWGBS Discovery Cohort") +
-#   xlab("\u0394 Methylation [%]\nTargeted Sequencing Validation Cohort") +
-#   #labs(title = "Log-Backtransformed, Quantile Normalised and ComBat", 
-#   labs(colour="DMR") +
-#   stat_cor(label.x =(-55) , label.y=c(-5, 5), method="pearson", size=2.5)+
-#   ylim(-lim, lim) +
-#   xlim(-lim, lim) +
-#   theme_Publication()+
-#   theme(aspect.ratio = 1)+
-#   # theme_bw()+
-# #   theme(plot.title = element_text(hjust = 0.5, face="bold", size=20), 
-# #         aspect.ratio = 1, 
-# #         legend.position="bottom", 
-# #         axis.title.y = element_text(angle=90,vjust =2, face = "bold"), 
-# #         axis.title.x = element_text(vjust = -0.2, face="bold"), 
-# #         legend.title = element_text(face="bold"),
-# #         legend.key.size= unit(0.5, "cm"),
-# #         
-# # )+
-#   scale_color_manual(values=c("#919494", "tan4"))+
-#   facet_wrap(vars(condition))
-# p66
-#annotate_figure(ggarrange(p66 , nrow=1, ncol=1), text_grob("DM Tiles", face = "bold", size=16))
-```
-
-```{r Number_of_Validated_Tiles_Validatioin_Cohort}
+```{r Number_of_Validated_Tiles_Validation_Cohort}
 cohort_comparison_validation_numbers_q_value_directional <- compare_discovery_validation %>%
   group_by(condition) %>% 
   dplyr::count(threshold_qvalue_directional =="significant") %>% 
@@ -1837,7 +1794,7 @@ add_metadata_matrix <- function(mx, metadata_df) {
 }
 ```
 
-####PCA on log transformed and combat data seperate condition all common tiles
+#### PCA on log transformed and combat data seperate condition all common tiles
 ```{r PCA_log_transformed_and_comBat, message=FALSE, warning=FALSE, error=FALSE, message=FALSE}
 overlap_grouped_log_combat <- overlap_grouped_log %>%
   map(~ long_df_to_matrix(.) %>%
