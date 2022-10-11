@@ -1,0 +1,552 @@
+---
+title: "Disease specific CpGs"
+author: "Katarzyna Wreczycka"
+output:
+  html_notebook:
+    toc:        TRUE
+    toc_float:  TRUE
+    theme:      "lumen"
+    number_sections: FALSE
+    code_folding: "hide"
+    self_contained: TRUE
+date: "`r Sys.Date()`"
+
+---
+
+In this report, my goal is to:
+1. get disease-specific CpGs based on previously called DMRs
+2. overlap disease-specific CpGs with tissue-specific CpGs from Alex (using deconvolution)
+3. report the overlap as a table that we will share with the meth. array company
+
+
+The explanation of sample groups:
+0: control
+1: ST-Elevation Myocardial Infarction [STEMI]
+2: non-ST segment elevation myocardial infarction [NSTEMI]
+3: Acute Coronary Syndrome ACS with instable(unstable) angina pectoris [ACS/IAP]
+4: Coronary artery disease, positive stress echocardiography, no percutaneous coronary intervention [CAD+posStressEcho+negIntervention]
+5: Coronary artery disease, positive stress echocardiography, with percutaneous coronary intervention [CAD+posStressEcho+posIntervention]
+
+
+```{r,results='asis'}
+
+sample_ids = c(
+ 'N1', # control
+ 'N2',
+ 'N3',
+ 'N4',
+ 'N5',
+ 'N6',
+ 'H26',
+ 'H28',
+
+ 'AC1', #stemi
+ 'AC2',
+ 'AC3',
+ 'AC4',
+ 'AC5',
+ 'AC6',
+ 'AC14',
+ 'AC15',
+
+ 'AC7',# nstemi
+ 'AC8',
+ 'AC9',
+ 'AC10',
+ 'AC11', 
+ 'AC12',
+ 'AC13',
+
+ 'AP1', #Acs/iAP
+ 'AP2',
+ 'AP3',
+ 'AP4',
+ 'AP5',  
+ 'AP6',
+
+ 'CS1', # CAD+posStressEcho+negIntervention
+ 'CS2',
+ 'CS3',
+ 'CS4', # CAD+posStressEcho+posIntervention
+ 'CS5',
+ 'CS6'
+)
+
+
+
+treatment_descr1=c(
+    rep("Control",8),  # control
+    rep("ACS/Stemi",8), #stemi
+    rep("ACS/Nstemi",7),  # nstemi
+    rep("ACS/iAP",6), #Acs/iAP
+    rep("CAD+posStressEcho+negIntervention",3), 
+    rep("CAD+posStressEcho+posIntervention",3)
+  )
+treatment1=c(
+    rep(0,8),  # control
+    rep(1,8), #stemi
+    rep(2,7),  # nstemi
+    rep(3,6), #Acs/iAP
+    rep(4,3), #CAD+posStressEcho+negIntervention
+    rep(5,3) #CAD+posStressEcho+posIntervention
+     )
+
+
+TBL = data.frame(sample_ids=sample_ids,
+                 #treatment_descr=treatment_descr,
+                 #treatment=treatment,
+                 treatment_descr1=treatment_descr1,
+                 treatment1=treatment1,
+                 stringsAsFactors = FALSE)
+library(knitr)
+kable(TBL, caption="Description of cardiac cfDNA samples")
+
+```
+
+
+
+Load libraries and get directories.
+```{r}
+library(methylKit)
+library(data.table)
+
+dbdir.dm='/local/AAkalin_cardiac/Results/cardiac/differential_methylation/'
+p06_methyl_calls="/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/"
+RDS.outpath="/local/AAkalin_cardiac/Results/cardiac/RDS/"
+
+
+methT.path = '/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/tileMethylCounts/methylBase_CpG_dT_tiles_win500bp_step500bp_123batch_v1.txt.bgz'
+meth.deT=methylKit:::readMethylBaseDB(methT.path,"tabix",
+                  sample_ids, "hg38" ,"CpG",
+                  "region",treatment1,TRUE,skip=0)
+
+
+```
+
+
+Here, I want to get CpGs within DMRs that are the least variable between
+samples within the same group and with the highest coverage.
+
+
+```{r}
+
+#################
+## heart_diseases vs control
+################
+# significant DMRs between differenct cardiac subgroups vs control (differrence=25, qvalue=0.01)
+myDiff25p_tiled_list_v1 = readRDS(paste0(RDS.outpath, "myDiff25p_tiled_list_v1.RDS"))
+
+
+#################
+## CAD+posStressEcho+posIntervention vs CAD+posStressEcho+negIntervention
+################
+
+# significant DMRs between CAD with and without stent (differrence=25, qvalue=0.01)
+methylDiff.CADwithvswithoutstent = readRDS(paste0(RDS.outpath,
+         "myDiff25p_tiled_CADwith.stent_vs_CADwo.stent.RDS"))
+#################
+## separate CAD into two groups
+################
+
+#methT.path = '/data/akalin/Projects/AAkalin_cfdna/Results/cardiac//06_methyl_calls_bwameth/tileMethylCounts/methylBase_CpG_dT_tiles_win500bp_step500bp_123batch_v1.txt.bgz'
+# meth.deT=methylKit:::readMethylBaseDB(methT.path,"tabix",
+#                  TBL$sample_ids, "hg38" ,"CpG",
+#                  "region",TBL$treatment,TRUE,skip=0)
+# lapply(c("CAD+posStressEcho+posIntervention","CAD+posStressEcho+negIntervention"), function(treat){
+# 	# Subset only CAD samples
+# 	meth.deT.subset =reorganize(meth.deT,
+# 	       sample.ids=c(TBL$sample_ids[which(TBL$treatment_descr1==treat)],
+# 	       				TBL$sample_ids[which(TBL$treatment_descr1=="Control")]),
+# 	       treatment=c(rep(1,sum(TBL$treatment_descr1==treat)), # group 1
+# 	       			   rep(0,sum(TBL$treatment_descr1=="Control"))),# group 0
+# 	       save.db = FALSE )
+# 	dbdir.dm='/data/akalin/Projects/AAkalin_cfdna/Results/cardiac/differential_methylation/'
+# 	methylDiff=calculateDiffMeth(
+# 		                      meth.deT.subset,
+# 	  						 chunk.size = 1e7, 
+# 	  						 save.db = TRUE,
+# 	  						 mc.cores=40,
+# 	  						 suffix=paste0("tiles_win500bp_step500bp_batch123",
+# 	  						 			   "_CADwith.",treat,"_vs_healthy"),
+# 							 overdispersion="MN", 
+# 							 test="Chisq",
+# 							 dbdir=dbdir.dm
+# 	   )
+# 	myDiff = getMethylDiff(methylDiff,
+# 									difference=25,
+# 									qvalue=0.01,
+# 									save.db = FALSE)
+# 	myDiff= as(myDiff,"GRanges")
+# 	saveRDS(myDiff, 
+# 	       paste0(RDS.outpath, "myDiff25p_tiled_",treat,".vs.healthy.RDS"))
+# })
+# significant DMRs between CAD without stent vs healthy/control (differrence=25, qvalue=0.01)
+myDiff25p.CADwithoutstent.vs.h=readRDS(paste0(RDS.outpath, 
+	"myDiff25p_tiled_CAD+posStressEcho+negIntervention.vs.healthy.RDS"))
+# significant DMRs between CAD with stent vs healthy/control (differrence=25, qvalue=0.01)
+myDiff25p.CADwithstent.vs.h=readRDS(paste0(RDS.outpath, 
+	"myDiff25p_tiled_CAD+posStressEcho+posIntervention.vs.healthy.RDS"))
+
+
+
+
+diffmeth.l=c(myDiff25p_tiled_list_v1,
+			 myDiff25p.CADwithoutstent.vs.h,
+			 myDiff25p.CADwithstent.vs.h,
+	 		 methylDiff.CADwithvswithoutstent)
+names(diffmeth.l) = 
+				c(paste0(names(myDiff25p_tiled_list_v1)," vs healthy"),
+				  "CAD+posStressEcho+negIntervention vs healthy",
+				  "CAD+posStressEcho+posIntervention vs healthy",
+				  "CAD+posStressEcho+posIntervention vs CAD+posStressEcho+negIntervention"	
+ )
+# > sapply(diffmeth.l, length)egIntervention"     
+#                                                   ACS_Stemi vs healthy       
+#                                                                    688       
+#                                                  ACS_Nstemi vs healthy       
+#                                                                    388       
+#                                                     ACS_iAP vs healthy       
+#                                                                    865       
+#                                           CAD+posStressEcho vs healthy       
+#                                                                    154       
+#                           CAD+posStressEcho+negIntervention vs healthy       
+#                                                                    235       
+#                           CAD+posStressEcho+posIntervention vs healthy       
+#                                                                    204       
+# CAD+posStressEcho+posIntervention vs CAD+posStressEcho+negIntervention       
+#                                                                    813
+
+
+# Here, we decided to take ACS, and CAD DMRs for further analysis
+# to get disease specific CpGs
+diffmeth.lH = diffmeth.l[c(1,2,3,5,6,7)]
+
+
+# Get DMC specific to the disease
+myDiff25p_specdisease = lapply(1:length(diffmeth.lH), 
+							   function(i){
+			myDiff25p_allothers=unlist(GRangesList(diffmeth.lH[-i]))
+			fi=findOverlaps(diffmeth.lH[[i]], myDiff25p_allothers)
+			diffmeth.l_list.i.unique = diffmeth.lH[[i]][-queryHits(fi),]
+			diffmeth.l_list.i.unique
+})
+names(myDiff25p_specdisease) = names(diffmeth.l)[c(1,2,3,5,6,7)]
+# > sapply(myDiff25p_specdisease, length)
+#               ACS_Stemi vs healthy                              
+#                                481                              
+#               ACS_Nstemi vs healthy                              
+#                                 221                              
+#               ACS_iAP vs healthy                              
+#                                 606                              
+#               CAD+posStressEcho+negIntervention vs healthy                              
+#                                 143                              
+#               CAD+posStressEcho+posIntervention vs healthy                              
+#                                 124                              
+# CAD+posStressEcho+posIntervention vs CAD+posStressEcho+negIntervention                              
+#                                 763   
+
+target.DMRs     = unlist(GRangesList(diffmeth.lH))
+red.target.DMRs = unique(reduce(target.DMRs))
+# > length(red.target.DMRs)                                                
+# [1] 2684
+# > length(red.target.DMRsno5)                                             
+# [1] 2544
+
+
+methT.path = '/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/tileMethylCounts/methylBase_CpG_dT_tiles_win500bp_step500bp_123batch_v1.txt.bgz'
+meth.deT=methylKit:::readMethylBaseDB(methT.path,"tabix",
+                  sample_ids, "hg38" ,"CpG",
+                  "region",treatment,TRUE,skip=0)
+meth.deT.red.target.DMRs=
+ 	methylKit:::applyTbxByOverlap(meth.deT@dbpath,
+ 				  ranges=red.target.DMRs,
+                   return.type = "data.table",
+                   chunk.size=1000000,
+                   FUN = func.fun)
+methylKit:::.setMethylDBNames(meth.deT.red.target.DMRs,"methylBaseDB")
+
+
+
+#################
+## no filtering (not used in the end)
+################
+tabix.files.filtered.dt=lapply(sample_ids, function(s){
+           dbpath = paste0(p06_methyl_calls, s, "/tabix_CpG/",s,"_CpG_filtered.txt.bgz" )
+           tmp=my.read.Tabix(dbpath,
+               "tabix",
+                s, 
+                "hg38" ,
+                "CpG",
+                "base")})
+names(tabix.files.filtered.dt) = sample_ids
+treatment1=c(
+    rep(0,8),  # control
+    rep(1,8), #stemi
+    rep(2,7),  # nstemi
+    rep(3,6), #Acs/iAP
+    rep(4,3), #CAD+posStressEcho+negIntervention
+    rep(5,3) #CAD+posStressEcho+posIntervention
+     )
+methRawList_fil=new("methylRawList",
+   lapply(tabix.files.filtered.dt, function(x) x$obj),
+   treatment=treatment1)
+
+# Set all samples to have the same treatment, so that unite function
+# doesn't remove any CpG, even if I set min.per.group to 1
+# it might happen that some CpGs will disappear
+methRawList_fil.notreat=methRawList_fil
+methRawList_fil.notreat@treatment = rep(0, length(methRawList_fil.notreat@treatment))
+meth_unite_cpgs=unite(methRawList_fil.notreat, 
+                  destrand=TRUE, 
+                  save.db = TRUE,
+                  mc.cores = 100,
+                  min.per.group=1L,
+                  suffix="meth_unite_cpgs_minpergroup1L_treat0.txt.bgz"
+                  )
+meth_unite_cpgs_redmrs=selectByOverlap(meth_unite_cpgs, 
+                                       red.target.DMRs)
+#methylBase object with 13065 rows
+cgs.disease.spec=as(meth_unite_cpgs_redmrs, "GRanges")
+mcols(cgs.disease.spec)<-NULL
+# length(cgs.disease.spec) 13065
+
+
+########################################################
+############## filtering -> DMRs covered in at least 50% samples
+########################################################
+
+
+methRawList_fil_red.target.DMRs1 = 
+  lapply(methRawList_fil, function(x){
+                selectByOverlap(x, red.target.DMRs)
+})
+methRawList_fil_red.target.DMRs=new("methylRawList",
+            methRawList_fil_red.target.DMRs1, 
+            treatment=TBL$treatment1)
+
+# # and now extract all Cs from there
+methRawList_fil_red.target.DMRs@treatment=rep(0, length(TBL$treatment1)) 
+meth.deT_red.target.DMRs=unite(methRawList_fil_red.target.DMRs, 
+                  destrand=TRUE, 
+                  save.db = FALSE,
+                  min.per.group=1L,
+                  mc.cores = 0
+                  )
+#methylBase object with 13088 rows 
+# saveRDS(meth.deT_red.target.DMRs, paste(RDS.outpath,"meth.deT_red.target.DMRs.RDS"))
+
+# Then, simply get all the CpGs in those DMRs that are covered at least 50% of the samples
+meth_red.target.DMRs=percMethylation(meth.deT_red.target.DMRs)
+count.na=apply(meth_red.target.DMRs, 1, function(x) sum(is.na(x)) )
+indx.na.more50perc.samples=sum(count.na>floor(ncol(meth_red.target.DMRs)/2))
+meth_red.target.DMRs=meth_red.target.DMRs[-indx.na.more50perc.samples,]
+meth.deT_red.target.DMRs=meth.deT_red.target.DMRs[-indx.na.more50perc.samples,]
+#dim(meth_red.target.DMRs)
+# [1] 11424    35
+
+# remove with variance = 0
+library(matrixStats)
+sds=rowSds(meth_red.target.DMRs, na.rm = TRUE)
+# # summary(sds) 
+# # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+# # 0.00   12.17   18.03   17.85   22.76   47.46 
+sds.0=which(sds==0)
+meth_red.target.DMRs1=meth_red.target.DMRs[-sds.0,]
+meth.deT_red.target.DMRs1 = meth.deT_red.target.DMRs[-sds.0,]
+
+# # This result CpGs within DMRs
+# meth.deT_red.target.DMRs1
+cpgs.disease.spec.gr = as(meth.deT_red.target.DMRs1,"GRanges")
+# > table(seqnames(cpgs.disease.spec.gr))                                                                  
+#  chr1 chr10 chr11 chr12 chr13 chr14 chr15 chr16 chr17 chr18 chr19  chr2 chr20 
+#   901   502   503   499   285   320   392   459   665   187   352   795   540 
+# chr21 chr22  chr3  chr4  chr5  chr6  chr7  chr8  chr9  chrX  chrY 
+#   197   256   595   575   636   587   447   471   414   518   252
+#saveRDS(cpgs.disease.spec.gr, paste(RDS.outpath, "cpgs.disease.spec.gr.RDS"))
+
+
+
+########################################################
+############## Associate DMRs with genes using rGREAT
+########################################################
+
+outdir="/data/local/AAkalin_cardiac/Results/cardiac/for_methylation_arrays/"
+pdf(paste0(outdir, "plotRegionGeneAssociationGraphs_DMRs.pdf"))
+require(rGREAT)
+geneList <- lapply(diffmeth.lH, function(dm) {
+    job = submitGreatJob(dm,species = "hg38",request_interval = 10)
+    res = plotRegionGeneAssociationGraphs(job)
+    return(list(job = job, res = res))
+})
+dev.off()
+
+library(ggplot2)
+library(enrichR)
+dbs <- listEnrichrDbs()
+websiteLive <- TRUE
+if (is.null(dbs)) websiteLive <- FALSE
+## choose all available databases
+dbs_selected <- dbs$libraryName
+## query only relevant ones
+dbs_selected <- grep(pattern = "rare",ignore.case = TRUE,invert = TRUE,value = TRUE,x = 
+                         grep(pattern = "disease", ignore.case = TRUE, dbs$libraryName,value = TRUE))
+dbs_selected = c(dbs_selected,
+ "GO_Biological_Process_2018" ,                                    
+ "GO_Cellular_Component_2018"  ,                                   
+ "GO_Molecular_Function_2018")
+
+gresList = lapply(geneList, function(x) unique(x$res$gene))
+resDir=paste0(outdir, "/enrichr_dmrs/")
+if(!dir.exists(file.path(resDir,"GOTerms","enrichr"))) dir.create(file.path(resDir,"GOTerms","enrichr"))
+gotPlots <- lapply(setNames(names(gresList),names(gresList)), function(tissue) {
+    # tissue <- "Monocytes_EPIC"
+    if (websiteLive) {
+        enriched <- enrichr(unique(geneList[[tissue]]$res$gene), dbs_selected)
+        pdf(file.path(resDir,"GOTerms", paste0(tissue,"_GOTerms_enrichr.pdf")), width=15)
+        for (db in dbs_selected) {
+            data <- enriched[[db]]
+            data <- head(data[order(data$Combined.Score,decreasing = TRUE),],n = 20)
+            data$Term <- with(data, factor(Term, levels = Term[order(Combined.Score,decreasing = FALSE)]))
+            p <- ggplot(data,aes(x = Combined.Score, y =  Term)) +
+                geom_bar(aes(fill = Combined.Score),stat = "identity",show.legend = FALSE) +
+                ggtitle(label = gsub("_EPIC","",tissue),subtitle = db)
+            ggsave(plot = p, filename = file.path(resDir, paste0(tissue,"_",db,"_GOTerms_enrichr.png")), width=15)
+            print(p) 
+        }
+        dev.off()
+        }
+    })
+
+```
+
+
+# Overlap of Alex's tissue-specific CpGs with disease-specific CpGs
+
+
+```{r}
+
+cpg_tissuespec=fread("/data/local/agosdsc/projects/AAkalin_cfdTissue/results/extendedReference_probeRegionInfo.csv")
+# > table(cpg_tissuespec$CHR_hg38)                                                     
+#        chr1 chr10 chr11 chr12 chr13 chr14 chr15 chr16 chr17 chr18 chr19  chr2 
+#     4   463   290   358   289   147   161   140   334   379    47   349   383 
+# chr20 chr21 chr22  chr3  chr4  chr5  chr6  chr7  chr8  chr9 
+#    99    51   101   234   215   266   323   370   206    83 
+cpg_tissuespec=cpg_tissuespec[-which(cpg_tissuespec$CHR_hg38==""),]
+
+#table(cpg_tissuespec$Strand_hg38)
+cpg_tissuespec_gr=makeGRangesFromDataFrame(cpg_tissuespec,
+              keep.extra.columns=FALSE,
+              ignore.strand=FALSE,       
+              seqnames.field="CHR_hg38",   
+              start.field="Start_hg38",    
+              end.field="End_hg38",    
+              strand.field="Strand_hg38",   
+              starts.in.df.are.0based=TRUE)  
+# illumina is 0-based https://www.biostars.org/p/443647/
+
+# > table(strand(cpg_tissuespec_gr))                                    
+#    +    -    * 
+# 2665 2623    0 
+cpg_tissuespec_grF = cpg_tissuespec_gr[strand(cpg_tissuespec_gr)=="+"]
+cpg_tissuespec_grR = cpg_tissuespec_gr[strand(cpg_tissuespec_gr)=="-"]
+cpg_tissuespec_grR = GRanges(seqnames(cpg_tissuespec_grR),
+							 IRanges(start(cpg_tissuespec_grR)-1L,
+							 		 end(cpg_tissuespec_grR)-1L),
+							 "+")
+cpg_tissuespec_gr = sort(c(cpg_tissuespec_grF,cpg_tissuespec_grR))
+end(cpg_tissuespec_gr) = end(cpg_tissuespec_gr)-1
+# gr=cpg_tissuespec_gr 
+# df <- data.frame(seqnames=seqnames(gr),
+#   starts=start(gr)-1,
+#   ends=end(gr),
+#   names=c(rep(0, length(gr))),
+#   scores=c(rep(0, length(gr))),
+#   strands=strand(gr))
+# outdir="/data/local/AAkalin_cardiac/Results/cardiac/for_methylation_arrays/"
+# write.table(df, file=paste0(outdir,"tissue_spec_great.bed"), quote=F, sep="\t", row.names=F, col.names=F)
+
+
+
+all.cpgs = sort(unique(c(cgs.disease.spec, cpg_tissuespec_gr)))
+# length(all.cpgs) 25344
+  
+
+```
+
+```{r}
+
+
+meth_unite_cpgs.allcpgs=selectByOverlap(meth_unite_cpgs, all.cpgs)
+methRawList_fil_red.target.DMRs2 = 
+ 	lapply(methRawList_fil, function(x){
+								selectByOverlap(x, all.cpgs)
+})
+methRawList_fil_red.target.DMRs22=new("methylRawList",
+   					methRawList_fil_red.target.DMRs2, 
+   					treatment=TBL$treatment1)
+
+# and now extract all Cs from there
+methRawList_fil_red.target.DMRs22@treatment=rep(0, length(TBL$treatment1)) 
+meth.deT_red.target.DMRs112=unite(methRawList_fil_red.target.DMRs22, 
+                  destrand=TRUE, 
+                  save.db = FALSE,
+                  min.per.group=1L,
+                  mc.cores = 0
+                  )
+# methylBase object with 19480 rows                                        
+
+
+meth_unite_cpgs.allcpgs.gr=as(meth_unite_cpgs.allcpgs, "GRanges")
+mcols(meth_unite_cpgs.allcpgs.gr)<-NULL
+
+allcpgs.meth=percMethylation(meth_unite_cpgs.allcpgs)
+
+# remove with variance = 0
+library(matrixStats)
+sds=rowSds(allcpgs.meth, na.rm = TRUE)
+sds.0=which(sds==0 | is.na(sds))
+allcpgs.meth1=allcpgs.meth[-sds.0,]
+meth_unite_cpgs.allcpgs1=meth_unite_cpgs.allcpgs[-sds.0,]
+count.na=apply(allcpgs.meth1, 1, function(x) sum(!is.na(x)) )
+indx.na.gt3samples=which( count.na >= floor( ncol(allcpgs.meth)*(0.1)) )
+allcpgs.meth1=allcpgs.meth1[indx.na.gt3samples,]
+meth_unite_cpgs.allcpgs1=meth_unite_cpgs.allcpgs1[indx.na.gt3samples,]
+meth_unite_cpgs.allcpgs1.gr=as(meth_unite_cpgs.allcpgs1, "GRanges")
+mcols(meth_unite_cpgs.allcpgs1.gr)<-NULL
+
+
+########################################################
+############## Add CpGs from FAM101A gene (doi: 10.1038/s41467-018-03961-y)
+########################################################
+
+# Add CpGs from FAM101A gene
+#Chromosome 12: 123,973,241-124,316,024 
+FAM101A = GRanges("chr12", IRanges(start=124207861, end=124208060))
+meth.deT.FAM101A=
+  methylKit:::getTabixByOverlap(meth_unite_cpgs@dbpath,
+                                FAM101A,
+                                return.type = "GRanges")
+mcols(meth.deT.FAM101A) <- NULL
+
+
+meth_unite_cpgs.allcpgs1.gr = c(meth_unite_cpgs.allcpgs1.gr, meth.deT.FAM101A)
+meth_unite_cpgs.allcpgs1.gr=unique(sort(meth_unite_cpgs.allcpgs1 ))
+
+
+
+########################################################
+############## Save to a file
+########################################################
+
+gr=meth_unite_cpgs.allcpgs1.gr
+df <- data.frame(chr.hg38=seqnames(gr),
+  position.hg38=start(gr),
+  strand.hg38=strand(gr))
+
+write.table(df, file="/local/AAkalin_cardiac/Results/cardiac/for_methylation_arrays/disease_tissue_spec_cpgs_hg38.txt", quote=F, sep="\t", row.names=F, col.names=T)
+
+
+
+
+```
+

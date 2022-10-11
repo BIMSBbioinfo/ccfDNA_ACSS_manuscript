@@ -1,0 +1,1017 @@
+---
+title: "Annotate DMRs"
+author: "Rafael Cuadrat"
+output:
+  html_notebook:
+    toc:        TRUE
+    toc_float:  TRUE
+    theme:      "lumen"
+    number_sections: FALSE
+    code_folding: "hide"
+    self_contained: TRUE
+date: "`r Sys.Date()`"
+---
+
+This notebook annotates DMRs for the 5 groups, adding gene info, GO, phenotype associations, DO and disgenet associations.  
+
+
+
+
+
+
+```{r}
+#Loading libraries and DMRs
+require(rGREAT)
+library("annotatr")
+library(GenomicRanges)
+library(tidyverse)
+library("biomaRt")
+library(DOSE)
+library(disgenet2r)
+library(methylKit)
+library(genomation)
+library(pheatmap)
+library(knitr)
+library(kableExtra)
+library(stringi)
+library("enrichplot")
+#library(dplyr)
+library(gridExtra)
+
+
+
+#OPEN DMR FILES
+
+myDiff25p_tiled_list_v1 <- readRDS("/local/AAkalin_cardiac/Results/cardiac/RDS/myDiff25p_tiled_list_v1.RDS")
+
+myDiff25p_tiled_list_v1_CAD_neg <-readRDS("/local/AAkalin_cardiac/Results/cardiac/RDS/myDiff25p_tiled_CAD+posStressEcho+negIntervention.vs.healthy.RDS")
+myDiff25p_tiled_list_v1_CAD_pos <-readRDS("/local/AAkalin_cardiac/Results/cardiac/RDS/myDiff25p_tiled_CAD+posStressEcho+posIntervention.vs.healthy.RDS")
+
+myDiff25p_tiled_list_v1[["CAD+posStressEcho+pos"]] <- myDiff25p_tiled_list_v1_CAD_pos
+myDiff25p_tiled_list_v1[["CAD+posStressEcho+neg"]] <- myDiff25p_tiled_list_v1_CAD_neg
+
+#coercing DMRs to a dataframes
+DMR <- lapply(myDiff25p_tiled_list_v1, function(i){
+  return(data.frame(i))
+})
+```
+
+
+Annotate with rGREAT
+
+```{r, echo = FALSE}
+geneList <- lapply(myDiff25p_tiled_list_v1, function(dm) {
+                                             job = submitGreatJob(
+                                             dm,
+                                             species = "hg38",
+                                             includeCuratedRegDoms = TRUE,
+                                             #bgChoice              = ifelse(is.null(bg), "wholeGenome", "data"),
+                                             rule                  = c("basalPlusExt", "twoClosest", "oneClosest"),
+                                             adv_upstream          = 5.0,
+                                             adv_downstream        = 1.0,
+                                             adv_span              = 1000.0,
+                                             adv_twoDistance       = 1000.0,
+                                             adv_oneDistance       = 1000.0,
+                                             request_interval = 30,
+                                             max_tries = 10,
+                                             version = "default")
+  print(availableOntologies(job))
+
+  res = plotRegionGeneAssociationGraphs(job)
+  return(list(job = job, res = res))
+})
+
+#coercing results do dataframe
+geneList_df <- lapply(geneList, function(i){
+  return(data.frame(i$res))
+})
+```
+
+
+
+
+
+## reproducing Kasia results with old version of GREAT that included dropped ontologies (for example MSigDB)
+
+```{r}
+liftOver.hg38_to_hg19 = function(mycur){
+  require(rtracklayer)
+  #require(liftOver) #Failed with error:  ‘‘liftOver’ is not a valid installed package’; #TODO: I got this error, that's why I use import.chain function below
+  path = "/local/AAkalin_cardiac/Base/liftOver/hg38ToHg19.over.chain"
+  ch = import.chain(path)
+  seqlevelsStyle(mycur) = "UCSC"  # without it it doesn't work
+  cur19 = liftOver(mycur, ch)
+  cur19 = unlist(cur19)
+  genome(cur19) = "hg19"
+  return(cur19)
+}
+```
+
+
+
+
+```{r}
+myDiff25p_tiled.hg19 = lapply(myDiff25p_tiled_list_v1, function(dm){
+  liftOver.hg38_to_hg19(as(dm, "GRanges"))
+})
+```
+
+
+```{r}
+ great.output.list = lapply(myDiff25p_tiled.hg19, function(dm){
+ job=submitGreatJob(dm, bg = NULL,
+                      species               = "hg19",
+                      includeCuratedRegDoms = TRUE,
+                      #bgChoice              = ifelse(is.null(bg), "wholeGenome", "data"),
+                      rule                  = c("basalPlusExt", "twoClosest", "oneClosest"),
+                      adv_upstream          = 5.0,
+                      adv_downstream        = 1.0,
+                      adv_span              = 1000.0,
+                      adv_twoDistance       = 1000.0,
+                      adv_oneDistance       = 1000.0,
+                      request_interval = 30,
+                      max_tries = 10,
+                      version = "3.0.0") #have to stick to 3.0.0 because new version only have GO, no MSigDB
+  print(availableOntologies(job))
+  
+ tb = getEnrichmentTables(job, ontology = c("GO Molecular Function" ,
+                                              "GO Biological Process" ,
+                                              "GO Cellular Component", 
+                                              "BioCyc Pathway",
+                                              "MSigDB Pathway",
+                                              "MSigDB Oncogenic Signatures",
+                                              "MSigDB Cancer Neighborhood",
+                                              "Human Phenotype",
+                                             "Disease Ontology",
+                                              "Ensembl Genes"))
+ list(job=job,tb= tb)
+ })
+```
+
+```{r}
+saveRDS(great.output.list,"/local/rcuadrat/cfdna_wgbs/tmp_dfs/GREAT_v3.RDS")
+
+```
+
+
+```{r}
+saveRDS(geneList_df,"/local/rcuadrat/cfdna_wgbs/tmp_dfs/geneList_df.RDS")
+saveRDS(geneList,"/local/rcuadrat/cfdna_wgbs/tmp_dfs/geneList.RDS")
+```
+
+
+Annoate with annotatR
+The hg38_cpgs shortcut annotates regions to CpG islands, CpG shores, CpG shelves, and inter-CGI. 
+The hg38_basicgenes shortcut annotates regions to 1-5Kb, promoters, 5’UTRs, exons, introns, and 3’UTRs.
+
+
+
+```{r}
+code = c('lncrna' = 'AH49559')
+build_ah_annots(genome = 'hg38', ah_codes = code, annotation_class = 'custom')
+print(annotatr_cache$list_env())
+
+
+annots = c('hg38_cpgs', 'hg38_basicgenes', 'hg38_genes_intergenic',
+           'hg38_genes_intronexonboundaries','hg38_enhancers_fantom','hg38_custom_lncrna') 
+
+
+anno_lncrna = annotatr::build_annotations(genome = 'hg38', annotations = annots)
+
+
+
+dm_annotated2 <- lapply(myDiff25p_tiled_list_v1, function(dm) {
+    a=annotate_regions(
+    regions = dm,
+    annotations = anno_lncrna,
+    ignore.strand = TRUE,
+    quiet = FALSE)
+  return(a)
+})
+
+```
+
+
+
+```{r}
+saveRDS(dm_annotated2, "/local/rcuadrat/cfdna_wgbs/tmp_dfs/annotR.RDS")
+```
+
+
+```{r}
+
+#library(rtracklayer)
+#library(AnnotationHub)
+#library(Rsamtools)
+
+```
+
+
+
+Enhancers annotatiom from roadmap
+
+```{r}
+files <- list.files(path="~/roadmap", pattern="*.bed", full.names=TRUE, recursive=FALSE)
+```
+
+
+```{r}
+files
+```
+
+
+
+```{r}
+#merge all BED files (they are on ~/roadmap)
+#https://egg2.wustl.edu/roadmap/web_portal/chr_state_learning.html#exp_18state
+#sample names and descriptions
+#https://docs.google.com/spreadsheets/d/1yikGx4MsO9Ei36b64yOy9Vb6oPC5IBGlFbYEt-N6gOM/edit#gid=15
+
+bedfile <- lapply(files,function(x) {
+  
+  bedfile<-import(x, format="bed")
+  bedfile<-bedfile[grepl("Enh|Tss", bedfile$name)]
+  #replace for something picking the last item instead hard-code a number
+  bedfile$sample<-str_split(x,"/")[[1]][[5]]
+  return(bedfile)
+  
+})
+
+all_bed<-do.call("c",bedfile)
+
+```
+
+```{r}
+all_bed
+```
+
+
+```{r}
+write.table(as(all_bed,"data.frame"),file="~/enh_promot_roadmap.csv",sep="\t",row.names =FALSE)
+
+```
+
+
+```{r}
+#merge all BED files (they are on ~/roadmap)
+#https://egg2.wustl.edu/roadmap/web_portal/chr_state_learning.html#exp_18state
+#sample names and descriptions
+#https://docs.google.com/spreadsheets/d/1yikGx4MsO9Ei36b64yOy9Vb6oPC5IBGlFbYEt-N6gOM/edit#gid=15
+
+bedfile_enh <- lapply(files,function(x) {
+  
+  bedfile<-import(x, format="bed")
+  bedfile<-bedfile[grepl("Enh", bedfile$name)]
+  #replace for something picking the last item instead hard-code a number
+  bedfile$sample<-str_split(x,"/")[[1]][[5]]
+  return(bedfile)
+  
+})
+
+all_bed_enh<-do.call("c",bedfile_enh)
+
+```
+
+```{r}
+#as(all_bed_enh,"data.frame")
+```
+
+
+```{r}
+write.table(as(all_bed_enh,"data.frame"),file="~/enh_roadmap.csv",sep="\t",row.names =FALSE)
+
+```
+
+```{r}
+bedfile_tss <- lapply(files,function(x) {
+  
+  bedfile<-import(x, format="bed")
+  bedfile<-bedfile[grepl("Tss", bedfile$name)]
+  #replace for something picking the last item instead hard-code a number
+  bedfile$sample<-str_split(x,"/")[[1]][[5]]
+  return(bedfile)
+  
+})
+
+all_bed_promoters<-do.call("c",bedfile_tss)
+```
+
+
+```{r}
+as(all_bed_promoters,"data.frame")
+```
+```{r}
+write.table(as(all_bed_promoters,"data.frame"),file="~/promoters_roadmap.csv",sep="\t",row.names =FALSE)
+```
+
+
+```{r}
+#overlap DMRs with the BED files from roadmap
+
+final_enhancer <- lapply(myDiff25p_tiled_list_v1, function(x) {
+  tmp_bed2 <- findOverlaps(x, all_bed)
+  tmp_bed2 <-data.frame(tmp_bed2)
+  tmp_bed3<-data.frame(x[tmp_bed2$queryHits])
+  tmp_bed4<-data.frame(all_bed[tmp_bed2$subjectHits])
+  tmp_bed4 <- tmp_bed4 %>% dplyr::select(name,sample)
+  final_enhancer_annotated<-merge(tmp_bed3,tmp_bed4,by=0)
+  final_enhancer_annotated <-final_enhancer_annotated %>% group_by(seqnames,start,end,strand) %>% summarise_all(~paste(unique(stri_remove_empty(na.omit(.))), collapse = ','))
+  
+}
+)
+
+```
+
+```{r}
+dm_annotated3 <- lapply(names(dm_annotated2), function(i) {
+  print(i)
+  
+  tmp<-c(dm_annotated2[[i]]$annot,makeGRangesFromDataFrame(final_enhancer[[i]] %>% dplyr::select(seqnames,start,end,strand,name,sample) %>% mutate(name = strsplit(as.character(name),",")) %>% 
+  unnest(name) %>% mutate(sample = strsplit(as.character(sample),",")) %>% unnest(sample) %>% rename("type"="name"),keep.extra.columns = TRUE))
+  
+}
+)
+names(dm_annotated3) <- names(dm_annotated2)
+
+```
+
+```{r}
+saveRDS(dm_annotated3, "/local/rcuadrat/cfdna_wgbs/tmp_dfs/annotR_dm3.RDS")
+```
+
+
+
+```{r}
+#using biomart to get gene ids from entrez (necessary for disginet)
+
+ensembl=useMart("ensembl")
+ensembl = useDataset("hsapiens_gene_ensembl",mart=ensembl)
+ensembl = useMart("ensembl",dataset="hsapiens_gene_ensembl")
+
+attributes = listAttributes(ensembl)
+
+
+
+gene_ids_mart <- lapply(geneList_df, function(i){
+        r <-getBM(attributes=c('hgnc_symbol','entrezgene_id'),
+        filters = 'hgnc_symbol',
+        values = i$gene,
+        mart = ensembl,
+        useCache = FALSE)
+        return(r)
+
+})
+
+#adding entrez id on GREAT tables
+geneList_entrez <- mapply(merge, x=geneList_df,y=gene_ids_mart, 
+                          by.x="gene",by.y="hgnc_symbol",all.x = TRUE ,SIMPLIFY=FALSE) 
+
+
+```
+
+```{r}
+saveRDS(geneList_entrez,"/local/rcuadrat/cfdna_wgbs/tmp_dfs/geneList_entrez.RDS")
+
+```
+
+
+Disgenet enrichment and plots
+```{r}
+enrichment_all <- lapply(geneList_entrez, function(i){
+  enr<-enrichDGN(
+    i$entrezgene_id,
+    pvalueCutoff = 0.05,
+    pAdjustMethod = "BH",
+    minGSSize = 10,
+    maxGSSize = 500,
+    qvalueCutoff = 0.2,
+    readable = FALSE
+  )
+  #enr@result <-enr@result %>% filter(str_detect(Description, regex(terms_for_regex, ignore_case = T)))
+  plt<-dotplot(enr, showCategory=30)
+  return(enr)
+  
+})
+  
+```
+
+
+```{r}
+saveRDS(enrichment_all,"/local/rcuadrat/cfdna_wgbs/tmp_dfs/enrichment_all.RDS")
+
+```
+
+
+```{r}
+# Get DMC specific to the disease   
+#removing CAD group with both pos and neg myDiff25p_tiled_list_v1[-4], keeping just the splited verion
+
+myDiff25p_specdisease = lapply(1:length(myDiff25p_tiled_list_v1[-4]), 
+							   function(i){
+			myDiff25p_allothers=unlist(GRangesList(myDiff25p_tiled_list_v1[-4][-i]))
+			fi=findOverlaps(myDiff25p_tiled_list_v1[-4][[i]], myDiff25p_allothers)
+			diffmeth.l_list.i.unique = myDiff25p_tiled_list_v1[-4][[i]][-queryHits(fi),]
+			diffmeth.l_list.i.unique
+})
+
+names(myDiff25p_specdisease)<-names(myDiff25p_tiled_list_v1[-4])
+
+```
+
+
+```{r}
+# Get DMC specific to the disease ONLY considering ACS
+
+myDiff25p_specdisease_ACS = lapply(1:length(myDiff25p_tiled_list_v1[-4:-6]), 
+							   function(i){
+			myDiff25p_allothers=unlist(GRangesList(myDiff25p_tiled_list_v1[-4:-6][-i]))
+			fi=findOverlaps(myDiff25p_tiled_list_v1[-4:-6][[i]], myDiff25p_allothers)
+			diffmeth.l_list.i.unique = myDiff25p_tiled_list_v1[-4:-6][[i]][-queryHits(fi),]
+			diffmeth.l_list.i.unique
+})
+
+names(myDiff25p_specdisease_ACS)<-names(myDiff25p_tiled_list_v1[-4:-6])
+```
+
+
+
+Merging DMR stats and GREAT annotations
+
+
+```{r}
+#Merging DMR stats and GREAT annotations
+DMR_great <- mapply(left_join, DMR, geneList_df,
+                    by.x=c("seqnames","start","end", "width", "strand"),by.y=c("seqnames","start","end", "width", "strand") ,SIMPLIFY=FALSE)
+
+
+```
+
+
+
+Get EFO associated genes from https://alpha.targetvalidation.org/
+
+```{r}
+EFO_CHD<-read.table("/home/rcastro/EFO_0001645-associated-diseases.tsv",sep="\t",header = TRUE)
+EFO_CHD <-EFO_CHD %>% rename("gene"="symbol")
+EFO_CHD <-EFO_CHD %>% dplyr::select(gene,overallAssociationScore) %>% rename("EFO0001645_score"="overallAssociationScore")
+
+
+DMR_great_EFO <- lapply(DMR_great, function(dm) {
+
+  
+  df<-merge(dm,EFO_CHD,
+            by="gene", all.x=TRUE ,SIMPLIFY=FALSE)
+  return(df)
+  
+  })
+  
+```
+
+
+
+
+Annotating with disgenet
+Taking gene symbols 
+Taking the diseases associated to each gene
+
+
+```{r}
+
+#diginet now needs API key that should be obtained with get_disgenet_api_key fuction after creating user and pwd
+
+disgenet <- lapply(DMR_great, function(i){
+  ge <- unique(i$gene)
+  ge2<-split(ge, ceiling(seq_along(ge)/500))
+  ge_chunks_ge2di<-lapply(ge2, function(ck) {
+    ge2di <-gene2disease( gene = ck, verbose = TRUE, database="ALL")
+    return(ge2di@qresult)
+  })
+  return(bind_rows(ge_chunks_ge2di))
+  
+})
+
+#coercing results do dataframe
+disgenet_df <- lapply(disgenet, function(i){
+  return(data.frame(i))
+})
+
+#merging DMR table + disginet
+DMR_great_disgenet <- mapply(merge, DMR_great_EFO, disgenet_df,
+                      by.x=c("gene"),by.y=c("gene_symbol"), all.x=TRUE, SIMPLIFY=FALSE)
+```
+
+```{r}
+saveRDS(DMR_great_disgenet,"/local/rcuadrat/cfdna_wgbs/tmp_dfs/DMR_great_disgenet.RDS")
+
+```
+
+```{r}
+
+#Skiping authentication and loading old result
+DMR_great_disgenet<-readRDS("~/tmp_dfs/DMR_great_disgenet.RDS")
+
+
+```
+
+
+
+Get EFO vocabulary from disginet
+
+```{r}
+
+mapping_disgenet_EFO<-read.table(gzfile("/home/rcastro/disease_mappings.tsv.gz"),sep="\t", header = TRUE, quote = "\"")
+mapping_disgenet_EFO <-mapping_disgenet_EFO %>% dplyr::filter(vocabulary == "EFO")
+mapping_disgenet_EFO <-mapping_disgenet_EFO %>% rename("diseaseid" = "diseaseId")
+mapping_disgenet_EFO <-mapping_disgenet_EFO %>% dplyr::select(diseaseid,vocabulary,code) %>% mutate(EFO_id=paste(vocabulary,code,sep="_")) %>% dplyr::select(diseaseid,EFO_id)
+
+mapping_disgenet_EFO_2 <- lapply(DMR_great_disgenet, function(dm) {
+  df<-merge(dm,mapping_disgenet_EFO,
+            by="diseaseid", all.x=TRUE ,SIMPLIFY=FALSE)
+  return(df)
+})
+
+```
+
+Creating a column Y/N if finding terms related to heart diseases on disgenet gene->diseases associations (looking in disease name and disease class)
+Summarizing a column with disease names and class (with heart related terms) (comma sepated terms)
+Summarizing all the other columns (comma separated) (to make one row for one DMR)
+Creating column with max values for scores of gene->associations (MAX_*). Those columns are only considering the scores from gene-diseases associations from heart related diseases.
+
+```{r}
+patent_genes <-c("AF161365", "HNRPF", "ACBD5", "TFCP2", "DDX18", "AF289562", "CD248", "CD79B", "CD19", "SPIB",
+                 "BLK", "CD3D", "LCK", "TMC8", "CCT2", "S100A12", "MMP9", "CLEC4E", "ALOX5AP", "S100A8", "NAMPT", "RPL28",
+                 "SSRP1", "AQP9", "GLT1D1", "NCF4", "NCF2", "CASP5", "H3F3B", "IL18RAP", "TXN", "TNFAIP6", "PLAUR", "IL8RB",
+                 "BCL2A1", "TNFRSF10C", "PTAFR", "KCNE3", "LAMP2", "TLR4", "TYROBP", "SLAMF7", "CX3CR1", "KLRC4","CD8A")
+```
+
+
+```{r}
+library(readxl)
+circulation_MI <- read_excel("~/circulation_MI.xlsx")
+circulation_CHD <- read_excel("~/circulation_CHD.xlsx")
+
+
+circulation_genes_MI <-c(circulation_MI$Gene)
+circulation_genes_CHD <-c(circulation_CHD$`Gene‡`)
+
+```
+
+```{r}
+library(readr)
+cluster8 <- read_table2("~/cluster8.csv", 
+                        locale = locale(decimal_mark = ","))
+
+
+cluster9 <- read_table2("~/cluster9.csv", 
+                        locale = locale(decimal_mark = ","))
+
+cluster10 <- read_table2("~/cluster10.csv", 
+                        locale = locale(decimal_mark = ","))
+```
+
+```{r}
+cluster8 <- cluster8$gene
+cluster9 <- cluster9$gene
+cluster10 <- cluster10$gene
+
+```
+
+
+
+
+```{r}
+
+terms_for_regex="heart|coronary|atherosclerosis|inflammation|cardio|vascular|artery|infarction|myocard|cardiac|artery calcification|arterial stiffness"
+
+
+na.strings=c("", "NA")
+
+# string dectection for disases and sumarizing, creating Y|N column
+
+heart_v2 <- lapply(mapping_disgenet_EFO_2, function(i){
+  return( i %>%
+            mutate(heart_disease_related = ifelse(  str_detect(disease_name, regex(terms_for_regex, ignore_case = T)) | 
+                                              str_detect(disease_class_name,regex(terms_for_regex, ignore_case = T)),
+                                              "Y","N" )) %>%
+            tidyr::replace_na(list(heart_disease_related = "N")) %>%
+            
+            
+            mutate(patent_genes = ifelse( gene %in% patent_genes  ,
+                                              "Y","N" )) %>%
+            tidyr::replace_na(list(patent_genes = "N")) %>%
+            
+            
+            
+            mutate(circulation_genes_MI = ifelse( gene %in% circulation_genes_MI  ,
+                                              "Y","N" )) %>%
+            tidyr::replace_na(list(circulation_genes_MI = "N")) %>%
+            
+            
+            mutate(circulation_genes_CHD = ifelse( gene %in% circulation_genes_CHD  ,
+                                              "Y","N" )) %>%
+            tidyr::replace_na(list(circulation_genes_CHD = "N")) %>%
+            
+            
+            mutate(cluster9 = ifelse( gene %in% cluster9  ,
+                                              "Y","N" )) %>%
+            tidyr::replace_na(list(cluster9 = "N")) %>%
+            
+            
+                        mutate(cluster10 = ifelse( gene %in% cluster10  ,
+                                              "Y","N" )) %>%
+            tidyr::replace_na(list(cluster10 = "N")) %>%
+            
+            
+                        mutate(cluster8 = ifelse( gene %in% cluster8  ,
+                                              "Y","N" )) %>%
+            tidyr::replace_na(list(cluster8 = "N")) %>%
+            unique() %>%
+            group_by(seqnames,start,end, width, strand,qvalue,meth.diff) %>% 
+            summarize_all(~paste(unique(stri_remove_empty(na.omit(.))), collapse = ',')) %>%
+            mutate(heart_disease_related = ifelse(str_detect(heart_disease_related, regex("Y")),"Y",heart_disease_related)) %>%
+            mutate(patent_genes = ifelse(str_detect(patent_genes, regex("Y")),"Y",patent_genes)) %>%
+            mutate(circulation_genes_MI = ifelse(str_detect(circulation_genes_MI, regex("Y")),"Y",circulation_genes_MI)) %>%
+            mutate(circulation_genes_CHD = ifelse(str_detect(circulation_genes_CHD, regex("Y")),"Y",circulation_genes_CHD)) %>%
+            mutate(cluster8 = ifelse(str_detect(cluster8, regex("Y")),"Y",cluster8)) %>% 
+            mutate(cluster9 = ifelse(str_detect(cluster9, regex("Y")),"Y",cluster9)) %>%
+            mutate(cluster10 = ifelse(str_detect(cluster10, regex("Y")),"Y",cluster10))
+          
+          
+            )})
+
+scores <- lapply(mapping_disgenet_EFO_2, function(i){
+  return( i %>%
+            filter( str_detect(disease_name, regex(terms_for_regex, ignore_case = T)) | 
+                    str_detect(disease_class_name,regex(terms_for_regex, ignore_case = T)) ) %>%
+            group_by(seqnames,start,end, width, strand,qvalue,meth.diff) %>% 
+            summarise_at(c("score","ei","gene_dsi"), max, na.rm = TRUE) %>%
+            rename(c('max_score'='score','max_ei'='ei','max_dsi'='gene_dsi')) %>% 
+            mutate_all(function(x) ifelse(is.infinite(x), 0, x)) 
+  )})
+
+only_heart_col <- lapply(mapping_disgenet_EFO_2, function(i){
+  return( i %>%
+            filter( str_detect(disease_name, regex(terms_for_regex, ignore_case = T)) | 
+                      str_detect(disease_class_name,regex(terms_for_regex, ignore_case = T)) ) %>%
+            group_by(seqnames,start,end, width, strand,qvalue,meth.diff) %>% 
+            summarise_at(c("disease_name","disease_class_name","EFO_id"),~paste(unique(stri_remove_empty(na.omit(.))), collapse = ', '), max, na.rm = TRUE) %>%
+            rename(c('heart_disease_name'='disease_name','heart_disease_class_name'='disease_class_name','EFO_id_heart_related'='EFO_id'))
+
+  )})
+
+final_DMR_df <- mapply(left_join, x=heart_v2,y=scores, 
+                       by.x=c("seqnames","start","end", "width", "strand"),by.y=c("seqnames","start","end", "width", "strand") ,SIMPLIFY=FALSE) 
+
+final_DMR_df <- mapply(left_join, x=final_DMR_df,y=only_heart_col, 
+                       by.x=c("seqnames","start","end", "width", "strand"),by.y=c("seqnames","start","end", "width", "strand") ,SIMPLIFY=FALSE)
+                      
+```
+
+Calculating within group variation (SD)
+
+
+```{r}
+sample_ids = c('N1','N2','N3','N4','N5','N6','H26','H28',
+  'AC1','AC2','AC3','AC4','AC5','AC6','AC14','AC15',
+  'AC7','AC8','AC9','AC10','AC11','AC12','AC13',
+  'AP1','AP2','AP3','AP4','AP5','AP6',
+  'CS1','CS2','CS3','CS4','CS5','CS6')
+
+
+
+treatment1=c(
+    rep(0,8),  # control
+    rep(1,8), #stemi
+    rep(2,7),  # nstemi
+    rep(3,6), #Acs/iAP
+    rep(4,3), #CAD+posStressEcho+negIntervention
+    rep(5,3) #CAD+posStressEcho+posIntervention
+     )
+
+
+treatment_descr=c(
+  rep("Control",8),  # control
+  rep("ACS_Stemi",8), #stemi
+  rep("ACS_Nstemi",7),  # nstemi
+  rep("ACS_iAP",6), #Acs/iAP
+  rep("CAD+posStressEcho+neg",3),
+  rep("CAD+posStressEcho+pos",3)
+)
+
+```
+
+
+```{r}
+#open methylDB with all tiles methylation
+
+methT.path_tiled = '/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/tileMethylCounts/methylBase_CpG_dT_tiles_win500bp_step500bp_123batch_v1.txt.bgz'
+meth.deT_tiled=methylKit:::readMethylBaseDB(methT.path_tiled,"tabix",
+                                     sample_ids, "hg38" ,"CpG",
+                                     "region",treatment1,TRUE,skip=0)
+
+
+#extracting methylation for all CpGs for all the samples
+perc <- percMethylation(meth.deT_tiled)
+perc <- data.frame(perc)
+#defining groups
+control<-c('N1','N2','N3','N4','N5','N6','H26','H28')
+stemi<-c('AC1','AC2','AC3','AC4','AC5','AC6','AC14','AC15')
+nstemi <-c( 'AC7','AC8','AC9','AC10','AC11','AC12','AC13')
+iAP <- c('AP1', 'AP2','AP3','AP4','AP5','AP6')
+cad_posStreessEcho <- c( 'CS1','CS2','CS3','CS4','CS5','CS6')
+cad_posStreessEcho_neg <- c('CS1','CS2','CS3')
+cad_posStreessEcho_pos <- c('CS4','CS5','CS6')
+
+list_of_groups<-list(control,stemi,nstemi,iAP,cad_posStreessEcho,cad_posStreessEcho_pos,cad_posStreessEcho_neg)
+names(list_of_groups) <- c("Control","ACS_Stemi","ACS_Nstemi","ACS_iAP","CAD+posStressEcho","CAD+posStressEcho+pos","CAD+posStressEcho+neg")
+
+```
+
+
+
+```{r}
+#geting coordinates from methylation sites (percMethylation returned methylation % without coordinates)
+coord <- read.table(gzfile('/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/tileMethylCounts/methylBase_CpG_dT_tiles_win500bp_step500bp_123batch_v1.txt.bgz'),
+                   sep="\t",comment.char = "#") 
+coord <-coord %>% dplyr::select(c("V1","V2","V3","V4")) 
+names(coord)<-c("seqnames","start","end", "strand")
+#perc_meth<-merge(coord,perc,by=0)
+```
+
+
+
+```{r}
+
+#calculating SD for perc methylation for all samples and for control
+SDs <- lapply(list_of_groups, function(i){
+  return(transform(perc, SD=apply(perc %>% dplyr::select(i),1, sd, na.rm = TRUE)) %>% dplyr::select(SD))
+})
+
+SD_df <- lapply(SDs[-1], function(i){
+  df<-merge(coord,i,by=0)
+  return(df %>% dplyr::select(-Row.names))
+  })
+SD_control<-merge(coord,SDs[1],by=0) %>% dplyr::select(-Row.names)
+SD_control <- SD_control %>% rename("SD_control"="SD")
+```
+
+
+```{r}
+#save SDs
+
+saveRDS(SD_control,"/local/rcuadrat/cfdna_wgbs/tmp_dfs/SDs_control.RDS")
+saveRDS(SD_df,"/local/rcuadrat/cfdna_wgbs/tmp_dfs/SDs_per_group.RDS")
+```
+
+
+```{r}
+#SD_control<-readRDS("~/tmp_dfs/SDs_control.RDS")
+#SD_df<-readRDS("~/tmp_dfs/SDs_per_group.RDS")
+
+
+```
+
+
+```{r}
+#merging SDs with DMRs annotated
+final_DMR_df_SDs <- mapply(left_join, x=final_DMR_df,y=SD_df, 
+                       by.x=c("seqnames","start","end", "strand"),by.y=c("seqnames","start","end", "strand") ,SIMPLIFY=FALSE) 
+
+final_DMR_df_SDs <- lapply(final_DMR_df_SDs,  function(i){
+  
+  df <- merge(i,SD_control,by.x=c("seqnames","start","end", "strand"),by.y=c("seqnames","start","end", "strand"),all.x = TRUE ,SIMPLIFY=FALSE)
+  return(df)
+})
+
+```
+
+
+
+```{r}
+#adding info if the DMRs are disease exclusive
+exc_df <- lapply(myDiff25p_specdisease, function(i){
+  df<-data.frame(i) %>% mutate(exclusive ="Y")
+ 
+  return(df %>% dplyr::select("seqnames","start","end", "width", "strand","exclusive"))
+})
+
+
+### merging disease exclusive col and REMOVING CAD group with both pos and neg
+final_DMR_df_SDs <- mapply(left_join, x=final_DMR_df_SDs[-4],y=exc_df, 
+                       by.x=c("seqnames","start","end", "width", "strand"),by.y=c("seqnames","start","end", "width", "strand") ,SIMPLIFY=FALSE)
+
+
+```
+
+
+Ranking by arrange and selecting columns for the final dataframe
+Order of arrange absolute meth.diff (effect size) ---> qvalue -> SD (within group variation) ---> heart_disease_related (Y|N) --> max_score (max score of heart related diseases for that DMR) --> max_ei ---> max_dsi
+
+```{r}
+final_DMR_df_SDs_sorted <- lapply(final_DMR_df_SDs, function(i){
+  
+  return(arrange(i,desc(abs(meth.diff)),qvalue,SD,desc(heart_disease_related),desc(max_score),desc(max_ei),desc(max_dsi)) %>%
+           dplyr::select("seqnames","start","end","width","strand","gene","distTSS","exclusive","patent_genes","circulation_genes_MI","circulation_genes_CHD",
+                         "heart_disease_related","heart_disease_name","EFO_id_heart_related","heart_disease_class_name","max_score","EFO0001645_score",
+                         "max_ei","max_dsi","meth.diff","qvalue","SD","SD_control") %>% 
+           rename("heart_disease_related_disgenet"="heart_disease_related",
+                                             "heart_disease_name_disgenet"="heart_disease_name",
+                                             "EFO_id_heart_related_disgenet"="EFO_id_heart_related",
+                                             "heart_disease_class_name_disgenet"="heart_disease_class_name",
+                                             "max_score_disgenet"="max_score","EFO0001645_score_open_target"="EFO0001645_score"))
+})
+
+
+
+```
+
+
+
+
+
+
+
+Generate the sets for upset plot for all DMRs and col with info on witch groups the DMR is present
+```{r}
+
+#this is for create a col in the DMR annotatead with info on witch groups the DMR is present
+g1 <- final_DMR_df_SDs_sorted$ACS_Stemi %>% dplyr::select("seqnames","start","end") %>% mutate(dmr = paste(seqnames,start,end,sep="_"))
+g2 <- final_DMR_df_SDs_sorted$ACS_Nstemi %>% dplyr::select("seqnames","start","end")%>% mutate(dmr = paste(seqnames,start,end,sep="_"))
+g3 <- final_DMR_df_SDs_sorted$ACS_iAP %>% dplyr::select("seqnames","start","end")%>% mutate(dmr = paste(seqnames,start,end,sep="_"))
+g4 <- final_DMR_df_SDs_sorted$`CAD+posStressEcho+pos` %>% dplyr::select("seqnames","start","end")%>% mutate(dmr = paste(seqnames,start,end,sep="_"))
+g5 <- final_DMR_df_SDs_sorted$`CAD+posStressEcho+neg` %>% dplyr::select("seqnames","start","end")%>% mutate(dmr = paste(seqnames,start,end,sep="_"))
+
+
+g1$present_in_groups<-"ACS_Stemi"
+g2$present_in_groups<-"ACS_Nstemi"
+g3$present_in_groups<-"ACS_iAP"
+g4$present_in_groups<-"CAD+posStressEcho+pos"
+g5$present_in_groups<-"CAD+posStressEcho+neg"
+
+
+####this is for veen diagram and upsetplot (for all DMRs)
+v<-list(c(g1$dmr),c(g2$dmr),c(g3$dmr),c(g4$dmr),c(g5$dmr))
+
+name_gs=c("Stemi","Nstemi","iAP","CAD_Echo_pos","CAD_Echo_neg")
+
+names(v)<-name_gs
+
+
+all_g<-rbind(g1,g2,g3,g4,g5)
+
+all_g<-data.frame(all_g) 
+all_g<- all_g %>% dplyr::select(seqnames,start,end,present_in_groups)
+all_g <- all_g %>% group_by(seqnames,start,end) %>% summarize_all(~paste(unique(stri_remove_empty(na.omit(.))), collapse = ','))
+
+final_DMR_df_SDs_sorted <- lapply(final_DMR_df_SDs_sorted,  function(i){
+  
+  df <- merge(i,all_g,by.x=c("seqnames","start","end"),by.y=c("seqnames","start","end"),all.x = TRUE ,SIMPLIFY=FALSE)
+  return(df)
+})
+
+final_DMR_df_SDs_sorted <- lapply(final_DMR_df_SDs_sorted, function(i){
+  
+  return(arrange(i,desc(abs(meth.diff)),qvalue,SD,desc(heart_disease_related_disgenet),desc(max_score_disgenet),desc(max_ei),desc(max_dsi)))
+})
+
+
+```
+
+
+
+```{r}
+saveRDS(final_DMR_df_SDs_sorted,"/local/rcuadrat/cfdna_wgbs/tmp_dfs/annotated_ranked_DMRs.RDS")
+```
+
+
+
+Here we join info from the CpG atlas for tissue specific CpGs
+
+```{r}
+#matrix with altas reference
+extendedReference <- read_csv("/local/agosdsc/projects/AAkalin_cfdTissue/results/extendedReference.csv")
+#location of the cpgs 
+cpg_tissuespec=data.table::fread("/local/agosdsc/projects/AAkalin_cfdTissue/results/extendedReference_probeRegionInfo.csv")
+#get only hg38 coordinates
+cpg_tissuespec=cpg_tissuespec[-which(cpg_tissuespec$CHR_hg38==""),]
+#renaming the cols
+cpg_tissuespec<-cpg_tissuespec %>% dplyr::select(CpG,CHR_hg38,Start_hg38,End_hg38,Strand_hg38) %>% rename("chr"="CHR_hg38","start"="Start_hg38","end"="End_hg38","strand"="Strand_hg38")
+
+```
+
+
+```{r}
+
+#getting the extreme values (biggest distance from the avg) and the tissue/cell that has this extreme values (cell/tissue specific cpgs)
+extendedReference <-extendedReference %>% remove_rownames %>% column_to_rownames(var="CpGs")
+extendedReference$avg <- rowMeans(extendedReference)
+extendedReference$max <-colnames(extendedReference[,1:28])[apply(extendedReference[,1:28], 1, which.max)]
+extendedReference$min <-colnames(extendedReference[,1:28])[apply(extendedReference[,1:28], 1, which.min)]
+extendedReference$max_value<-apply(X=extendedReference[,1:28], MARGIN=1, FUN=max)
+extendedReference$min_value<-apply(X=extendedReference[,1:28], MARGIN=1, FUN=min)
+extendedReference$max_mins_avg<- extendedReference$max_value - extendedReference$avg
+extendedReference$avg_mins_min<- extendedReference$avg - extendedReference$min_value
+extendedReference$specific <- ifelse(extendedReference$max_mins_avg >extendedReference$min_value, extendedReference$max, extendedReference$min)
+cpgs_tissues<-extendedReference %>% dplyr::select(specific)
+
+#merging the dataframe indicating CpGs --> tissue
+cpgs_tissues <-tibble::rownames_to_column(cpgs_tissues, "CpG")
+cpg_tissuespec <-merge(cpg_tissuespec,cpgs_tissues,by="CpG")
+cpg_tissuespec_gr=makeGRangesFromDataFrame(cpg_tissuespec,
+              keep.extra.columns=TRUE,
+              ignore.strand=FALSE,       
+              seqnames.field="chr",   
+              start.field="start",    
+              end.field="end",    
+              strand.field="strand",   
+              starts.in.df.are.0based=TRUE) 
+
+cpg_tissuespec_grF = cpg_tissuespec_gr[strand(cpg_tissuespec_gr)=="+"]
+cpg_tissuespec_grR = cpg_tissuespec_gr[strand(cpg_tissuespec_gr)=="-"]
+
+cpg_tissuespec_grR = GRanges(seqnames(cpg_tissuespec_grR),
+							 IRanges(start(cpg_tissuespec_grR)-1L,
+							 		 end(cpg_tissuespec_grR)-1L),
+							 "+",mcols=data.frame(cpg_tissuespec_grR) %>% dplyr::select(CpG,specific))
+names(values(cpg_tissuespec_grR)) <-c("CpG","specific")
+
+cpg_tissuespec_gr = sort(c(cpg_tissuespec_grF,cpg_tissuespec_grR))
+end(cpg_tissuespec_gr) = end(cpg_tissuespec_gr)-1
+
+
+list_treat<-unique(names(myDiff25p_tiled_list_v1[-4]))
+
+#making GRanges from the final_DMR_df_SDs_sorted to merge with CpG atlas tissue specific info
+final_cpgs_specifics <- lapply(list_treat, function(i){
+  tmp_annotated<-makeGRangesFromDataFrame(final_DMR_df_SDs_sorted[[i]],keep.extra.columns = TRUE)
+    tmp_annotated2<-findOverlaps(tmp_annotated,
+                                 cpg_tissuespec_gr)
+    tmp_annotated2 <-data.frame(tmp_annotated2)
+    tmp_annotated3<-data.frame(tmp_annotated[tmp_annotated2$queryHits])
+    tmp_annotated4<-data.frame(cpg_tissuespec_gr[tmp_annotated2$subjectHits])
+    tmp_annotated4 <- tmp_annotated4 %>% dplyr::select(CpG,specific)
+    final_tmp<-merge(tmp_annotated3,tmp_annotated4,by=0)
+    final_tmp <-final_tmp %>% group_by(seqnames,start,end,strand) %>% summarise_all(~paste(unique(stri_remove_empty(na.omit(.))), collapse = ','))
+    final_tmp <- final_tmp %>% dplyr::select("seqnames","start" ,"end","strand","CpG","specific")
+  
+  return(final_tmp)
+})
+names(final_cpgs_specifics) <-list_treat
+
+```
+
+
+```{r}
+
+
+#adding CpG tissue specific annotation to the sorted-annotated DMRs
+
+final_DMR_df_SDs_sorted <- mapply(left_join, x=final_DMR_df_SDs_sorted,y=final_cpgs_specifics, 
+                       by.x=c("seqnames","start","end", "width", "strand"),by.y=c("seqnames","start","end", "width", "strand") ,SIMPLIFY=FALSE)
+
+
+```
+
+
+```{r}
+final_enhancer_annotations <- lapply(final_enhancer[-4], function(i){
+  tmp<-as.data.frame(i)
+  tmp<-tmp %>% dplyr::select(seqnames,start,end,width,strand,name,sample) 
+  tmp <- tmp %>% group_by(seqnames,start,end,width,strand) %>%  summarise_all(~paste(unique(stri_remove_empty(na.omit(.))), collapse = ','))
+  tmp <- tmp %>% rename("enhancer_roadmap"="name","ChmmModels_enh"="sample")
+  return(tmp)
+})
+```
+
+
+```{r}
+final_regulatory_annotations <- lapply(dm_annotated2[-4], function(i){
+  tmp<-as.data.frame(i)
+  tmp<-tmp %>% dplyr::select(seqnames,start,end,width,strand,annot.id,annot.type) 
+  tmp <- tmp %>% group_by(seqnames,start,end,width,strand) %>%  summarise_all(~paste(unique(stri_remove_empty(na.omit(.))), collapse = ','))
+  return(tmp)
+})
+```
+
+
+```{r}
+final_DMR_df_SDs_sorted_annotated <- lapply(names(final_DMR_df_SDs_sorted), function(i){
+  tmp<-merge(final_DMR_df_SDs_sorted[[i]],final_regulatory_annotations[[i]],by=c("seqnames","start","end","width","strand"),all.x=TRUE)
+  tmp<-merge(tmp,final_enhancer_annotations[[i]],by=c("seqnames","start","end","width","strand"),all.x=TRUE)
+  return(tmp)
+})
+names(final_DMR_df_SDs_sorted_annotated)<-names(final_DMR_df_SDs_sorted)
+```
+
+
+
+```{r}
+saveRDS(final_DMR_df_SDs_sorted_annotated,"/local/rcuadrat/cfdna_wgbs/tmp_dfs/annotated_DMRs.RDS")
+```
+
+
+
+
+```{r}
+sessionInfo()
+```

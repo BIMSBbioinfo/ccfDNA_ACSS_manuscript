@@ -1,0 +1,90 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Short list select.
+
+
+```{r}
+
+final_DMR_df_SDs_sorted<-readRDS("/local/rcuadrat/cfdna_wgbs/tmp_dfs/annotated_DMRs.RDS")
+
+
+```
+
+
+
+```{r}
+final_DMR_df_SDs_sorted <- lapply(final_DMR_df_SDs_sorted, function(i){
+  tmp<-i
+  tmp$sum_SD <-tmp$SD +tmp$SD_control
+  return(tmp)
+})
+```
+
+
+```{r}
+final_DMR_df_SDs_sorted_disease_related <- lapply(final_DMR_df_SDs_sorted, function(i){
+  
+  tmp<-i %>% filter(heart_disease_related_disgenet =="Y")
+  return(head(arrange(tmp,exclusive,sum_SD,desc(abs(meth.diff)),qvalue,desc(max_score_disgenet),desc(max_ei),desc(max_dsi)),5))
+})
+```
+
+
+```{r}
+final_DMR_df_SDs_sorted_not_disease_related <- lapply(final_DMR_df_SDs_sorted, function(i){
+  
+  tmp<-i %>% filter(heart_disease_related_disgenet =="N")
+  return(head(arrange(tmp,exclusive,sum_SD,desc(abs(meth.diff)),qvalue),5))
+})
+```
+
+
+
+
+
+Now short list for paper - excluding CAD and re-check "exclusivity", considering only ACS
+
+
+```{r}
+final_ACS<-final_DMR_df_SDs_sorted[-5:-4]
+```
+
+
+```{r}
+final_ACS$ACS_Stemi <- final_ACS$ACS_Stemi %>% filter(!grepl("iAP",present_in_groups) & !grepl("Nstemi",present_in_groups))
+final_ACS$ACS_Nstemi <- final_ACS$ACS_Nstemi %>% filter(!grepl("iAP",present_in_groups) & !grepl("Stemi",present_in_groups))
+final_ACS$ACS_iAP <- final_ACS$ACS_iAP %>% filter(!grepl("Nstemi",present_in_groups) & !grepl("Stemi",present_in_groups))
+
+
+```
+
+
+
+```{r}
+final_DMR_df_SDs_sorted_disease_related_ACS <- lapply(final_ACS, function(i){
+  
+  tmp<-i %>% filter(heart_disease_related_disgenet =="Y")
+  return(head(arrange(tmp,sum_SD,desc(abs(meth.diff)),qvalue,desc(max_score_disgenet),desc(max_ei),desc(max_dsi)),5))
+})
+```
+
+
+```{r}
+final_DMR_df_SDs_sorted_not_disease_related_ACS <- lapply(final_ACS, function(i){
+  
+  tmp<-i %>% filter(heart_disease_related_disgenet =="N")
+  return(head(arrange(tmp,sum_SD,desc(abs(meth.diff)),qvalue),5))
+})
+```
+
+
+```{r}
+saveRDS(final_DMR_df_SDs_sorted_not_disease_related_ACS,"/local/rcuadrat/cfdna_wgbs/ranking/short_list_not_disease_ACS.RDS")
+saveRDS(final_DMR_df_SDs_sorted_disease_related_ACS,"/local/rcuadrat/cfdna_wgbs/ranking/short_list_disease_ACS.RDS")
+```
+
+
+

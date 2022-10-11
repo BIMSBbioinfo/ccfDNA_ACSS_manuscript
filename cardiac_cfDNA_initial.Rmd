@@ -1,0 +1,1184 @@
+---
+title: "WGBS data analysis on cardiac cfDNA"
+author: "Katarzyna Wreczycka"
+output:
+  html_notebook:
+    toc:        TRUE
+    toc_float:  TRUE
+    theme:      "lumen"
+    number_sections: FALSE
+    code_folding: "hide"
+    self_contained: TRUE
+date: "`r Sys.Date()`"
+
+---
+
+Samples aligned using trim_galore+bwa_meth+methyldacker, using a snakemake pipeline:
+github.com/katwre/makeWGBSnake/tree/db59d9bf5b1cbc286329fc46d4ccb724b60e507d
+config files:
+1. first and the second batch
+https://github.com/katwre/makeWGBSnake/blob/db59d9bf5b1cbc286329fc46d4ccb724b60e507d/Config_files/cardiac_hg38.yaml
+2. third batch of samples
+https://github.com/katwre/makeWGBSnake/blob/db59d9bf5b1cbc286329fc46d4ccb724b60e507d/Config_files/cardiac_hg38_slimdisk.yaml
+
+
+```{r,results='asis'}
+
+sample_ids = c(
+ 'N1', # control
+ 'N2',
+ 'N3',
+ 'N4',
+ 'N5',
+ 'N6',
+ 'H26',
+ 'H28',
+
+ 'AC1', #stemi
+ 'AC2',
+ 'AC3',
+ 'AC4',
+ 'AC5',
+ 'AC6',
+ 'AC14',
+ 'AC15',
+
+ 'AC7',# nstemi
+ 'AC8',
+ 'AC9',
+ 'AC10',
+ 'AC11', 
+ 'AC12',
+ 'AC13',
+
+ 'AP1', #Acs/iAP
+ 'AP2',
+ 'AP3',
+ 'AP4',
+ 'AP5',  
+ 'AP6',
+
+ 'CS1', #CAD+posStressEcho
+ 'CS2',
+ 'CS3',
+ 'CS4', 
+ 'CS5',
+ 'CS6'
+)
+
+treatment_descr=c(
+    rep("Control",8),  # control
+    rep("ACS/Stemi",8), #stemi
+    rep("ACS/Nstemi",7),  # nstemi
+    rep("ACS/iAP",6), #Acs/iAP
+    rep("CAD+posStressEcho",6) #CAD+posStressEcho
+  )
+
+
+treatment=c(
+    rep(0,8),  # control
+    rep(1,8), #stemi
+    rep(2,7),  # nstemi
+    rep(3,6), #Acs/iAP
+    rep(4,6) #CAD+posStressEcho
+     )
+
+
+TBL = data.frame(sample_ids=sample_ids,
+                 treatment_descr=treatment_descr,
+                 treatment=treatment,
+                 stringsAsFactors = FALSE)
+library(knitr)
+kable(TBL, caption="Description of cardiac cfDNA samples")
+
+```
+
+# Alignment, coverage, and methylation statistics
+
+
+Load libraries and get directories.
+```{r}
+library(methylKit)
+library(data.table)
+library(genomation)
+library(pheatmap)
+library(ggplot2)
+
+p06_methyl_calls="/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/"
+PLOTS="/local/AAkalin_cardiac/Results/cardiac/Plots/"
+RDS.outpath="/local/AAkalin_cardiac/Results/cardiac/RDS/"
+dbdir.dm='/local/AAkalin_cardiac/Results/cardiac/differential_methylation/'
+
+
+```
+
+Functions.
+```{r}
+
+my.read.Tabix = function( dbpath,
+                          dbtype,
+                          sample.id, 
+                          assembly ,
+                          context,
+                          resolution){
+require(methylKit)
+object.dt =data.table::fread( paste0('zcat ',dbpath))
+methylKit:::.setMethylDBNames(object.dt)
+
+num.records=Rsamtools::countTabix( dbpath )[[1]]
+
+object <- new("methylRawDB",
+          dbpath= dbpath,
+          num.records=num.records,
+          sample.id = sample.id, 
+          assembly = assembly,
+          context=context,
+          resolution=resolution,
+          dbtype=dbtype)
+list(obj=object, 
+     obj.dt=object.dt)
+
+}
+
+#' The same as methylKit::percMethylation, but returns data.table
+#' @rdname percMethylation-methods
+#' @aliases percMethylation,methylBaseDB-method
+percMethylation.methylKit = function(dt, methylBase, rowids=TRUE){
+  
+  meth.ma=dt[, methylBase.obj@numCs.index,with=FALSE]/
+      (dt[,methylBase.obj@numCs.index,with=FALSE] + 
+         dt[,methylBase.obj@numTs.index,with=FALSE] )   
+  # it doesnt matter anyways, because data.table doesn't have such thing as rownames.
+  rownames(meth.ma)=paste(as.character(dt[,1]),
+                      dt[,2],dt[,3],sep=".")
+  return(meth.ma)
+}
+
+```
+
+Read methylation files for each sample and get 
+objects that only bases with coverage from all samples are retained.
+
+```{r}
+
+# tabix.files.dt=lapply(sample_ids, function(s){
+#           dbpath = paste0(p06_methyl_calls, s, "/tabix_CpG/",s,".txt.bgz" )
+#           tmp=my.read.Tabix(dbpath,
+#               "tabix",
+#                s,
+#                "hg38" ,
+#                "CpG",
+#                "base")})
+# names(tabix.files.dt) = sample_ids
+
+#methRawList=new("methylRawList",
+#   lapply(tabix.files.dt, function(x) x$obj),
+#   treatment=c(
+#     rep(0,8),  # control
+#     rep(1,8), #stemi
+#     rep(2,7),  # nstemi
+#     rep(3,6), #Acs/iAP
+#     rep(4,6) #CAD+posStressEcho
+#      ))
+
+# # After filtering CpG with at least 3 reads on a CpG
+# tabix.files.filtered.dt=lapply(sample_ids, function(s){
+#           dbpath = paste0(p06_methyl_calls, s, "/tabix_CpG/",s,"_CpG_filtered.txt.bgz" )
+#           tmp=my.read.Tabix(dbpath,
+#               "tabix",
+#                s, 
+#                "hg38" ,
+#                "CpG",
+#                "base")})
+# names(tabix.files.filtered.dt) = sample_ids
+
+# methRawList_fil=new("methylRawList",
+#   lapply(tabix.files.filtered.dt, function(x) x$obj),
+#   treatment=c(
+#     rep(0,8),  # control
+#     rep(1,8), #stemi
+#     rep(2,7),  # nstemi
+#     rep(3,6), #Acs/iAP
+#     rep(4,6) #CAD+posStressEcho
+#      ))
+
+```
+
+Plot histograms of % methylation and coverage for each sample
+after filtering CpGs with at least 3 reads.
+```{r, echo = TRUE, out.width="30%"}
+# tabix.files.mb = lapply(tabix.files.filtered.dt, function(x) x$obj)
+# for(i in 1:length(tabix.files.mb)){
+#   png(paste0(PLOTS, 
+#     "getMethylationStats_filteredmincov3_",
+#     tabix.files.mb[[i]]@sample.id,
+#     "_mqc.png"))
+
+#     getMethylationStats(
+#       tabix.files.mb[[i]],
+#       plot=TRUE,
+#       both.strands=FALSE)
+
+#   dev.off()
+# }
+
+# for(i in 1:length(tabix.files.mb)){
+#   png(paste0(PLOTS, 
+#     "getCoverageStats_filteredmincov3_",
+#     tabix.files.mb[[i]]@sample.id,
+#     "_mqc.png"))
+
+#     getCoverageStats(
+#       tabix.files.mb[[i]],
+#       plot=TRUE,
+#       both.strands=FALSE)
+
+#   dev.off()
+# }
+myimages<-paste0(PLOTS, 
+    "MethStats/filteredmincov3/getCoverageStats_filteredmincov3_",
+    sample_ids,
+    "_mqc.png")
+include_graphics(myimages)
+
+myimages<-paste0(PLOTS, 
+    "MethStats/filteredmincov3/getMethylationStats_filteredmincov3_",
+    sample_ids,
+    "_mqc.png")
+include_graphics(myimages)
+```
+
+
+Create a table with alignment and methylation statistics.
+```{r}
+
+# The bisulfite conversion rate of each base (non-CpG) can be calculated as T / (T + C) * 100, 
+# where T is thymine and C is cytosine read numbers on that base.
+Bisulfite.conversion.rate = function(dt){
+  require(data.table)
+  sum(dt$numTs) / sum(dt$coverage) * 100
+}
+read.tabix.f = function(path){
+  require(data.table)
+  dt=fread(paste0("zcat ", path))
+  colnames(dt) = c('chr', 'start',   'end', 'strand', 'coverage', 'numCs', 'numTs')
+  return(dt)
+}
+
+BS.conv.rate.chh.chg = function(path.CHH, path.CHG){
+  
+  dt.CHH = try( read.tabix.f(path.CHH) )
+  dt.CHG = try( read.tabix.f(path.CHG) )
+  
+  # Ugly hack [START] ##############################################
+  # the problem is that I dont have enough memory to
+  # call methylation in CHH context, too big files.
+  # I can try to figure out, but I am not sure it's worth it for now.
+  if(is.data.table(dt.CHH)==FALSE & is.data.table(dt.CHG) ==FALSE){
+    return(NA)
+  }
+  if(is.data.table(dt.CHH) ==FALSE){
+    dt.CHH=dt.CHG
+  }
+  if(is.data.table(dt.CHG) ==FALSE){
+    dt.CHG=dt.CHH
+  }
+  # Ugly hack [END] ##############################################
+  
+  # dt.CHH[, c('chr', 'start',   'end', 'strand', 'numCs'):=NULL]  # remove cols fast
+  dt.CHG[, c('chr', 'start',   'end', 'strand', 'numCs'):=NULL]
+    bsr=Bisulfite.conversion.rate(dt.CHG)
+  return(bsr)
+}
+
+# 1st adn 2nd batch
+# BS.conv.rate = readRDS("/local/AAkalin_cardiac/Results/cardiac/RDS/BS.conv.rate")
+# sample_ids_bacth3 = sample_ids[-which(sample_ids %in% names(BS.conv.rate))]
+
+# BS.conv.rate_b3 = sapply(sample_ids_bacth3, function(sample1){
+  
+#   print(sample1)
+#   CHH=paste0('/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/',sample1,'/tabix_CHH/',sample1,'.txt.bgz')
+#   CHG=paste0('/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/',sample1,'/tabix_CHG/',sample1,'.txt.bgz')
+#   bsr=BS.conv.rate.chh.chg(CHH, CHG)
+#   bsr
+  
+# })
+# BS.conv.rate_b123 = c(BS.conv.rate, BS.conv.rate_b3)
+# BS.conv.rate_b123 = BS.conv.rate_b123[match(names(BS.conv.rate_b123),sample_ids)]
+# saveRDS(BS.conv.rate_b123, "/local/AAkalin_cardiac/Results/cardiac/RDS/BS.conv_batch123.rate")
+# BS.conv.rate = readRDS("/local/AAkalin_cardiac/Results/cardiac/RDS/BS.conv_batch123.rate.RDS")
+
+
+#sample.ids = c(sample.ids, c("H26", 'H28'))
+
+# methstats=lapply(1:length(sample.ids), function(i){
+#           #pdf(paste0("/local/AAkalin_cardiac/Results/cardiac/Plots/MethStats/raw/MethylationStats_",sample.ids[i],".pdf"))
+#           my.getMethylationStats(tabix.files.dt[[i]]$obj.dt, 
+#                                  tabix.files.dt[[i]]$obj, 
+#                                  plot=TRUE, both.strands=TRUE, labels=TRUE)
+#           #dev.off()
+#        })
+# avemethrate = sapply(1:length(sample.ids), function(i) mean(methstats[[i]][["all"]]) )
+
+
+# sample.ids = sample_ids
+# avecpgcoverage = sapply(1:length(sample.ids), function(i){
+#   object.dt=tabix.files.dt[[i]]$obj.dt
+#   mean(object.dt$coverage)
+# } )
+
+# cpgcoverage_gt3_perc = sapply(1:length(sample.ids), function(i){
+#   object.dt=tabix.files.dt[[i]]$obj.dt
+#   sum(object.dt$coverage>=3) / length(object.dt$coverage)*1.0
+# } )
+
+# cpgcoverage_gt5_perc = sapply(1:length(sample.ids), function(i){
+#   object.dt=tabix.files.dt[[i]]$obj.dt
+#   sum(object.dt$coverage>=5) / length(object.dt$coverage)*1.0
+# } )
+
+# cpgcoverage_gt10_perc = sapply(1:length(sample.ids), function(i){
+#   object.dt=tabix.files.dt[[i]]$obj.dt
+#   sum(object.dt$coverage>=10) / length(object.dt$coverage)*1.0
+# } )
+
+
+# cpgcoverage_gt20_perc = sapply(1:length(sample.ids), function(i){
+#   object.dt=tabix.files.dt[[i]]$obj.dt
+#   sum(object.dt$coverage>=20) / length(object.dt$coverage)*1.0
+# } )
+
+# cpgcoverage_gt30_perc = sapply(1:length(sample.ids), function(i){
+#   object.dt=tabix.files.dt[[i]]$obj.dt
+#   sum(object.dt$coverage>=30) / length(object.dt$coverage)*1.0
+# } )
+
+# cpgcoverage_gt3 = sapply(1:length(sample.ids), function(i){
+#   object.dt=tabix.files.dt[[i]]$obj.dt
+#   sum(object.dt$coverage>=3)
+# } )
+
+# cpgcoverage_gt5 = sapply(1:length(sample.ids), function(i){
+#   object.dt=tabix.files.dt[[i]]$obj.dt
+#   sum(object.dt$coverage>=5) 
+# } )
+
+# cpgcoverage_gt10 = sapply(1:length(sample.ids), function(i){
+#   object.dt=tabix.files.dt[[i]]$obj.dt
+#   sum(object.dt$coverage>=10)
+# } )
+
+# cpgcoverage_gt20 = sapply(1:length(sample.ids), function(i){
+#   object.dt=tabix.files.dt[[i]]$obj.dt
+#   sum(object.dt$coverage>=20) 
+# } )
+
+# cpgcoverage_gt30 = sapply(1:length(sample.ids), function(i){
+#   object.dt=tabix.files.dt[[i]]$obj.dt
+#   sum(object.dt$coverage>=30) 
+# } )
+
+
+# library(BSgenome.Hsapiens.UCSC.hg38)  
+# chrs <- names(Hsapiens)[1:24]
+# cgs <- lapply(chrs, function(x) start(matchPattern("CG", Hsapiens[[x]])))
+
+# cpgr <- do.call(c, lapply(1:24, function(x) GRanges(names(Hsapiens)[x], IRanges(cgs[[x]], width = 2))))
+# There were 23 warnings (use warnings() to see them)
+
+# cpgcoverage_perc = sapply(1:length(sample.ids), function(i){
+#   object.dt=tabix.files.dt[[i]]$obj.dt
+#   length(object.dt$coverage) / length(cpgr) * 1.0
+# } )
+# cpgcoverage = sapply(1:length(sample.ids), function(i){
+#   object.dt=tabix.files.dt[[i]]$obj.dt
+#   length(object.dt$coverage)
+# } )
+
+
+# suppl.tbl.2.header=c(
+# 'Sample',
+# 'BS-conversion rate',
+# #'Non-converion rate after MAPQ filtering',
+# #'CpG covered',
+# #'CpGs covered [%]',
+# 'Average CpG coverage',
+# 'CpGs coverage>=3',
+# 'CpGs coverage>=3 [%]',
+# 'CpGs coverage>=5',
+# 'CpGs coverage>=5 [%]',
+# 'CpGs coverage>=10',
+# 'CpGs coverage>=10 [%]',
+# 'CpGs coverage>=20',
+# 'CpGs coverage>=20 [%]'
+# # 'CpGs coverage>=30',
+# # 'CpGs coverage>=30 [%]',
+# #'Average CpG methylation rate'
+# )
+
+
+
+# suppl.tbl.2 = data.frame(
+#                          Sample=sample.ids,
+#                          BS.conv.rate = round(BS.conv.rate,2),
+#                          #cpgcovered = round(cpgcoverage,2),
+#                          #cpgcovered_perc = round(cpgcoverage_perc,2),
+#                          avecpgcoverage=round(avecpgcoverage,2),
+#                          cpgcoverage_gt3=round(cpgcoverage_gt3,2),  
+#                          cpgcoverage_gt3_perc=round(cpgcoverage_gt3_perc,2),                       
+#                          cpgcoverage_gt5=round(cpgcoverage_gt5,2),
+#                          cpgcoverage_gt5_perc=round(cpgcoverage_gt5_perc,2),
+#                          cpgcoverage_gt10=round(cpgcoverage_gt10,2),
+#                          cpgcoverage_gt10_perc=round(cpgcoverage_gt10_perc,2),
+#                          cpgcoverage_gt20=round(cpgcoverage_gt20,2),
+#                          cpgcoverage_gt20_perc=round(cpgcoverage_gt20_perc,2)
+#                          #cpgcoverage_gt30_perc=round(cpgcoverage_gt30_perc,2),
+#                          #avemethrate=round(avemethrate,2) 
+#                          )
+# colnames(suppl.tbl.2) = suppl.tbl.2.header
+# write.table(suppl.tbl.2,
+# 	#quote = FALSE, 
+# 	row.names = FALSE,
+# 	 sep=";",
+# 	"/local/AAkalin_cardiac/Results/cardiac/Plots/suppl.tbl.2.csv")
+
+suppl.tbl.2a = read.table("/local/AAkalin_cardiac/Results/cardiac/Plots/suppl.tbl.2.csv", header = TRUE, sep = ";", stringsAsFactors = FALSE)
+kable(suppl.tbl.2a)
+
+```
+
+# Comparative analysis
+
+Tile CpGs into 500bp windows with step-size 500 bp, and
+unite CpGs from all samples into one object. Calculate
+% methylation for each CpG.
+
+```{r}
+
+# tiles.path=paste0(p06_methyl_calls, "/tileMethylCounts/")
+# tiles=tileMethylCounts(methRawList_fil, 
+#   win.size=500,
+#   step.size=500,
+#   save.db=TRUE,
+#   suffix="tiles_win500bp_step500bp_batch123",
+#   dbdir=tiles.path)
+# saveRDS(tiles, paste0(tiles.path, "tiles_win500bp_step500bp_batch123.RDS"))
+# dbapth="/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/Plots/06_methyl_calls_bwameth/H28/tabix_CpG/"
+# tiles= lapply(sample_ids, function(s){
+#   methylKit:::readMethylRawDB(
+#       dbpath = paste0(dbapth,s,"_CpG_filtered_tiles_win500bp_step500bp.txt.bgz"),
+#       sample.id=s,
+#       assembly="hg38", 
+#       context ="CpG",
+#       resolution="region",
+#       dbtype = "tabix")
+#})
+
+
+# meth.deT=unite(tiles, 
+#                  destrand=TRUE, 
+#                  save.db = TRUE,
+#                  suffix = "CpG_dT_tiles_win500bp_step500bp_123batch",
+#                  dbdir=tiles.path)
+# compressing the file with bgzip...
+# making tabix index...
+# flatfile located at: /local/AAkalin_cardiac/Results/c
+# ardiac/06_methyl_calls_bwameth/tileMethylCounts/methylBase_CpG_dT_tiles_win500bp_step500bp
+# .txt.bgz
+# flatfile located at: /fast/work/projects/peifer_wgs/work/2017-12-19_WGBS/
+# Project/Results/cardiac/06_methyl_calls_bwameth/tileMethylCounts/methylBa
+# se_CpG_dT_tiles_win500bp_step500bp_123batch.txt.bgz
+
+methT.path = '/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/tileMethylCounts/methylBase_CpG_dT_tiles_win500bp_step500bp_123batch.txt.bgz'
+meth.deT=methylKit:::readMethylBaseDB(methT.path,"tabix",
+                 sample_ids, "hg38" ,"CpG",
+                 "region",treatment,TRUE,skip=0)
+```
+
+PCA analysis.
+
+```{r}
+
+# using methylKit functions.
+options(scipen=999)
+pdf("/local/AAkalin_cardiac/Results/cardiac/Plots/PCA/PCASamples_123batch.pdf")
+PCASamples(meth.deT)
+legend("topright",
+       legend=c("Control","ACS/Stemi","ACS/Nstemi" ,"ACS/iAP","CAD+posStressEcho"),
+       fill =rainbow(5)[c(0,1,2,3,4)+1],
+       border=NA,
+       box.col=NA, 
+       cex=1)
+PCASamples(meth.deT, screeplot=TRUE)
+dev.off()
+
+
+#' The same as methylKit::percMethylation, but returns data.table
+#' @rdname percMethylation-methods
+#' @aliases percMethylation,methylBaseDB-method
+percMethylation.methylKit = function(methylBase.obj,rowids=FALSE,save.txt,chunk.size,return.type){
+  
+  meth.fun = function(dt,numCs.index,numTs.index){
+    a=dt[, numCs.index,with=FALSE]/
+      (dt[,numCs.index,with=FALSE] + 
+         dt[,numTs.index,with=FALSE] )   
+    rownames(a)=paste(as.character(dt[[1]]),as.character(dt[[2]]),sep=".")
+    return(a)
+  } 
+  meth.ma <- methylKit:::applyTbxByChunk(methylBase.obj@dbpath,
+                                         return.type = return.type,
+                                         chunk.size=chunk.size,
+                                         FUN = meth.fun,
+                                         numCs.index=methylBase.obj@numCs.index,
+                                         numTs.index=methylBase.obj@numTs.index)
+  colnames(meth.ma) = methylBase.obj@sample.ids
+  return(meth.ma)
+}
+
+# mat=percMethylation.methylKit(meth.deT, save.txt=FALSE, 
+#                               chunk.size=10000, 
+#                               return.type="data.table")
+# saveRDS(mat, paste0(RDS.outpath, "percMethylation_batch123.RDS"))
+mat=readRDS(paste0(RDS.outpath, "percMethylation_batch123.RDS"))
+
+mat.forpca=mat
+mat.forpca =mat.forpca[ rowSums(is.na(mat.forpca))==0, ]
+library(matrixStats)
+sds=rowSds(as.matrix(mat.forpca))
+cutoff=quantile(sds,.99)
+mat.forpca=mat.forpca[sds>cutoff,]
+
+pcaMeth = prcomp(t(mat.forpca),
+                    center=TRUE, # whether the variables should be shifted to be zero centered
+                    scale. = TRUE #variables should be scaled to have unit variance before the analysis takes place
+)
+PoV <- pcaMeth$sdev^2/sum(pcaMeth$sdev^2)
+PoVperc <- round(PoV*100,1)
+
+pdf("/local/AAkalin_cardiac/Results/cardiac/Plots/PCA/hg38_123batch_pca_centeredscaled.pdf")
+plot(pcaMeth$x,
+     col=rainbow(5)[meth.deT@treatment+1],
+     pch=19, cex=2,
+     xlab=paste0("PC1: ",PoVperc[1]," % variance"), 
+     ylab=paste0("PC2: ",PoVperc[2]," % variance"))
+legend("topright",
+       legend=c("Control","ACS/Stemi","ACS/Nstemi" ,"ACS/iAP","CAD+posStressEcho"),
+       fill =rainbow(5)[c(0,1,2,3,4)+1],
+       border=NA,
+       box.col=NA, 
+       cex=1)
+text(pcaMeth$x[,1], pcaMeth$x[,2], rownames(pcaMeth$x), 
+  cex=0.7, pos=4, col="black")
+dev.off()
+
+```
+
+# Differential methylation
+
+```{r}
+
+# for(treat in c("ACS/Stemi","ACS/Nstemi" ,"ACS/iAP","CAD+posStressEcho")){
+
+#   TBL.subset=TBL[TBL$treatment_descr %in% c("Control", treat),]
+#   print(TBL.subset)
+#   meth.deT.subset =reorganize(meth.deT,
+#                    sample.ids=TBL.subset$sample_ids,
+#                    treatment=TBL.subset$treatment,
+#                    save.db = FALSE )
+
+#   myDiff=calculateDiffMeth(meth.deT.subset,
+#   chunk.size = 10000, 
+#   save.db = TRUE,
+#   mc.cores=2,
+#   suffix=paste0("tiles_win500bp_step500bp_batch123", 
+#                 "_treatment", 
+#                 stringr::str_replace_all(treat, "[[:punct:]]", "")),
+#   overdispersion="MN", 
+#   test="Chisq",
+#   dbdir=dbdir.dm## dbdir argument doesnt work!
+#   )
+
+dmc_treat = 
+lapply(c("ACS/Stemi","ACS/Nstemi" ,"ACS/iAP","CAD+posStressEcho"),
+  function(treat){
+
+    TBL.subset=TBL[TBL$treatment_descr %in% c("Control", treat),]
+    dbpath=paste0(dbdir.dm,
+                          paste0("methylDiff_tiles_win500bp_step500bp_batch123", 
+                                  "_treatment", 
+                                  stringr::str_replace_all(treat, "[[:punct:]]", ""),
+                                  ".txt.bgz"))
+    methylKit:::readMethylDiffDB(dbpath,
+                     "tabix",
+                     TBL.subset$sample_ids, 
+                     "hg38",
+                     "CpG",
+                     "region",
+                     TBL.subset$treatment,
+                     TRUE,
+                     skip=0)
+  })
+
+myDiff25p_tiled_list = lapply(dmc_treat, function(muDiff){
+  getMethylDiff(muDiff,difference=25,qvalue=0.01,save.db = FALSE)
+}); names(myDiff25p_tiled_list)=c("ACS/Stemi","ACS/Nstemi" ,"ACS/iAP","CAD+posStressEcho")
+#saveRDS(myDiff25p_tiled_list, 
+#       paste0(RDS.outpath, "myDiff25p_tiled_list.RDS"))
+
+get.nbr.DMCs.per.chr = function(list.of.methylDiffDB,
+                                SUBROUPS_VAR){
+  chroms = c(paste0("chr", 1:22), "chrX", "chrY")
+  dmc_treat_bars0=lapply(1:length(list.of.methylDiffDB), function(i){
+    print(i)
+    mylist=as.list( table( seqnames(as(list.of.methylDiffDB[[i]], "GRanges")) ) )
+    missing.chr=chroms[-which(chroms %in% names(mylist) )]
+    if(length(missing.chr)!=0){
+      if(length(missing.chr)>0){
+          for(mc in missing.chr) mylist[[mc]] = 0
+      }else{
+        mylist[[missing.chr]] = 0
+      }
+    }
+    mydf=as.data.frame(mylist)
+    mydf[match(chroms,names(mydf))]
+  })
+  dmc_treat_bars=as.data.frame(do.call("rbind",dmc_treat_bars0))
+  rownames(dmc_treat_bars) = SUBROUPS_VAR
+  colnames(dmc_treat_bars) = chroms
+  return(dmc_treat_bars)
+}
+
+dmc_treat_stats = get.nbr.DMCs.per.chr(myDiff25p_tiled_list,
+                                       c("ACS/Stemi","ACS/Nstemi" ,"ACS/iAP","CAD+posStressEcho"))
+
+#png(paste0(dbdir.dm,"/nbr.DMCs.per.chr_myDiff25p0_01p_CpG_dT_tiles_win500bp_step500bp_batch123.png"))
+barplot(as.matrix(dmc_treat_stats),
+        main="DMCs, tiled win500bp step500bp",
+        xlab="",
+        #col=SUBROUPS_COL,
+        legend = rownames(dmc_treat_stats),
+        horiz=TRUE,
+        las=2)
+#dev.off()
+```
+
+
+# DMRs heatmap
+```{r}
+methT.path = '/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/tileMethylCounts/methylBase_CpG_dT_tiles_win500bp_step500bp_123batch_v1.txt.bgz'
+meth.deT=methylKit:::readMethylBaseDB(methT.path,"tabix",
+                 sample_ids, "hg38" ,"CpG",
+                 "region",treatment,TRUE,skip=0)
+
+mat=readRDS(paste0(RDS.outpath, "percMethylation_batch123.RDS"))
+
+percMethylation.methylKit.coo = function(methylBase.obj,rowids=FALSE,save.txt,chunk.size,return.type){
+  meth.fun = function(dt){
+    #data.table(paste(as.character(dt[[1]]),as.character(dt[[2]]),sep="."))
+    data.table(chr=as.character(dt[[1]]),start=as.numeric(dt[[2]]),
+      end=as.numeric(dt[[3]]))
+  } 
+  methylKit:::applyTbxByChunk(methylBase.obj@dbpath,
+                                         return.type = return.type,
+                                         chunk.size=chunk.size,
+                                         FUN = meth.fun)
+}
+mat.coo=percMethylation.methylKit.coo(meth.deT, save.txt=FALSE, 
+                              chunk.size=10000, 
+                              return.type="data.table")
+mat.coo.gr=makeGRangesFromDataFrame(mat.coo, end.field="end")
+
+
+
+subtypes.DMCtiled.means.l = lapply(1:length(myDiff25p_tiled_list), 
+                                 function(subtype_i){
+
+    #print(subtype_i)
+    myDiff25p.dt.i=myDiff25p_tiled_list[[subtype_i]]
+
+    subtype_i.means.l = mclapply(1:ncol(mat), function(j){
+
+      mat.coo.gr$score=mat[[j]]
+      sm <-ScoreMatrix(target=mat.coo.gr, 
+                      windows=as(myDiff25p.dt.i, "GRanges"), 
+                      strand.aware=FALSE, 
+                      weight.col="score", 
+                      is.noCovNA = TRUE)
+      sm.r.ave=rowMeans(sm, na.rm=TRUE)
+      mat.coo.gr$score=mat[[1]]<-NULL
+      return(sm.r.ave)
+
+    }, mc.cores=3)
+    subtype_i.means = do.call("cbind",subtype_i.means.l)
+    return(subtype_i.means)
+
+}); names(subtypes.DMCtiled.means.l) = names(myDiff25p_tiled_list)
+
+
+subtypes.DMCtiled.means = do.call("rbind", subtypes.DMCtiled.means.l)
+subtypes.DMCtiled.means=subtypes.DMCtiled.means*100
+# saveRDS(subtypes.DMCtiled.means, 
+#   paste0(RDS.outpath,"subtypes.DMCtiled.means.RDS"))
+# saveRDS(mat.coo.gr, 
+#   paste0(RDS.outpath,"subtypes.DMCtiled.means.coordinates.RDS"))
+
+library(circlize)
+library(RColorBrewer)
+library(ComplexHeatmap)
+
+
+
+#pdf(paste0(dbdir.dm,"Diffmeth_heatmap_rowannot_rowsgrouping.pdf"), width=9)
+
+meth.max = if (max(subtypes.DMCtiled.means)==1) 1 else 100
+mycol <- colorRamp2(c(0, meth.max/2, meth.max), c("blue", "white", "red"))
+
+set2cols=brewer.pal(5, "Set2")
+col.group=set2cols[TBL$treatment+1]
+names(col.group) = TBL$treatment_descr
+ha <- HeatmapAnnotation(
+      Group=TBL$treatment_descr,
+      col=list(Group=col.group))
+
+r.col.group=set2cols[2:5]
+names(r.col.group) = 2:5
+r.treatment=rep(2:5, #if char vec then "Error in labels_mat[, i] : subscript out of bounds"
+  sapply(myDiff25p_tiled_list, nrow))
+
+ra <- rowAnnotation(DM_group= ,
+      col=list(DM_group=r.col.group))
+
+colnames(subtypes.DMCtiled.means) <- TBL$sample_ids
+
+Heatmap(as.matrix(subtypes.DMCtiled.means),
+  cluster_rows=TRUE,
+  cluster_columns=TRUE,
+  heatmap_legend_param = list(title = "Methylation [%]"),
+  row_title = "Differentially methylated regions",
+  column_title = "Cardiac samples",
+  top_annotation = ha,
+  right_annotation = ra,
+  col=mycol
+  )
+#dev.off()
+
+
+
+# Heatmap without CAD subgroup
+
+
+out.dir="/local/AAkalin_cardiac/Results/cardiac/Plots/DM/"
+pdf(paste0(out.dir,"Diffmeth_heatmap_rowannot_norowsgrouping_noCAD.pdf"), width=9)
+
+
+TBL.noCAD=TBL[-which(TBL$treatment_descr=="CAD+posStressEcho"),]
+
+rem.cad.indx=which(names(subtypes.DMCtiled.means.l) %in% c("CAD+posStressEcho"))
+subtypes.DMCtiled.means.noCAD = do.call("rbind", subtypes.DMCtiled.means.l[-rem.cad.indx])
+subtypes.DMCtiled.means.noCAD=subtypes.DMCtiled.means.noCAD*100
+subtypes.DMCtiled.means.noCAD = subtypes.DMCtiled.means.noCAD[,-which(TBL$treatment_descr=="CAD+posStressEcho")]
+colnames(subtypes.DMCtiled.means.noCAD) = TBL.noCAD$sample_ids
+
+# could you please re-plot the figure replacing ACS_iAP for ACS_UA ? iAP is german for unstable angina, and in the literature UA is the most used way
+TBL.noCAD$treatment_descr[which(TBL.noCAD$treatment_descr=="ACS/iAP")]="ACS_UA"
+TBL.noCAD$treatment_descr[which(TBL.noCAD$treatment_descr=="ACS/Nstemi")]="ACS_Nstemi"
+TBL.noCAD$treatment_descr[which(TBL.noCAD$treatment_descr=="ACS/Stemi")]="ACS_Stemi"
+names(subtypes.DMCtiled.means.l) = c("ACS_Stemi" , "ACS_Nstemi", "ACS_UA", "CAD+posStressEcho")
+
+
+mycol <- colorRamp2(c(0, meth.max/2, meth.max), c("blue", "white", "red"))
+
+set2cols=brewer.pal(5, "Set2")
+col.group=set2cols[TBL.noCAD$treatment+1]
+names(col.group) = TBL.noCAD$treatment_descr
+ha <- HeatmapAnnotation(
+      Group=TBL.noCAD$treatment_descr,
+      col=list(Group=col.group))
+
+r.col.group=set2cols[2:4]
+names(r.col.group) = names(subtypes.DMCtiled.means.l)[1:3]
+r.treatment=rep(names(subtypes.DMCtiled.means.l)[1:3],
+  sapply(subtypes.DMCtiled.means.l[1:3], nrow))
+
+ra <- rowAnnotation(DM_group=r.treatment,
+      col=list(DM_group=r.col.group))
+
+x=as.matrix(subtypes.DMCtiled.means.noCAD)
+rownames(x) = NULL
+Heatmap(x,
+  cluster_rows=FALSE,
+  cluster_columns=TRUE,
+  heatmap_legend_param = list(title = "Methylation [%]"),
+  row_title = "Differentially methylated regions",
+  column_title = "Cardiac samples",
+  top_annotation = ha,
+  right_annotation = ra,
+  col=mycol
+  )
+dev.off()
+
+
+```
+
+
+
+# Annotation of DMCs
+
+```{r, echo = TRUE, out.width="110%"}
+library(genomation)
+
+## - Cpg islands
+cpg_islands = readGeneric("/local/AAkalin_cardiac/Base/Annotation/hg38/cpgIslandExt_hg38.bed") # on beast
+cpg_islands$name="cpgi"
+## - Cpg shores
+# extract the shore defined by 2000 bp upstream of cpg islands
+shore1=flank(cpg_islands, 2000)
+# extract the shore defined by 2000 bp downstream of cpg islands
+shore2=flank(cpg_islands,2000,FALSE)
+# perform intersection and combine the shores where they overlap
+shore1_2=GenomicRanges::reduce(c(shore1,shore2))
+# extract the features (ranges) that are present in shores only and not in cpg_islands (ie., shores not overlapping islands)
+cpgi_shores=GenomicRanges::setdiff(shore1_2, cpg_islands)
+cpgi_shores$name="shore"
+## - Cpg shelves
+# extract the shore defined by 4000 bp upstream of cpg islands
+shelves1=flank(cpg_islands, 4000)
+# extract the shore defined by 2000 bp downstream of cpg islands
+shelves2=flank(cpg_islands,4000,FALSE)
+# perform intersection and combine the shelves where they overlap
+shelves1_2=GenomicRanges::reduce(c(shelves1,shelves2))
+# create a set of ranges consisting CpG Islands, Shores
+island_shores=c(cpg_islands, cpgi_shores)
+# extract the features (ranges) that are present in shelves only and not in cpg_islands  or shores(ie., shelves not overlapping islands or shores)
+cpgi_shelves=GenomicRanges::setdiff(shelves1_2, island_shores)
+cpgi_shelves$name="shelf"
+# annotate the CpGs  for the genomic location (promoter, exon, intron, enhancer etc)
+bed.file = "/local/AAkalin_cardiac/Base/Annotation/hg38/refseq.genes.hg38.bed"
+gene.parts = readTranscriptFeatures(bed.file)
+myfeat1 = list(
+  CpGi=cpg_islands,
+  CpG.shores=cpgi_shores,
+  CpG.shelves=cpgi_shelves
+)
+myfeat = as.list(gene.parts)
+myfeat$Exons <- myfeat$exons
+myfeat$Introns <- myfeat$introns
+myfeat$Promoters <- myfeat$promoters
+myfeat$TSSes <- NULL; myfeat$exons<-NULL;myfeat$introns<-NULL;myfeat$promoters<-NULL
+myfeat <- append(myfeat, myfeat1)
+myfeat <- lapply(myfeat, function(x){
+  mcols(x)<-NULL
+  x
+})
+myfeat = lapply(myfeat, function(ff){
+  keepStandardChromosomes(ff, 
+                        species="Homo sapiens",
+                        pruning.mode= "coarse")
+})
+
+dmc_treat.annot_25p0_01q = lapply(myDiff25p_tiled_list, function(dmcs){
+annotateWithFeatures(as(dmcs, "GRanges"), as(myfeat, "GRangesList"), intersect.chr=TRUE)
+})
+
+
+out.dir="/local/AAkalin_cardiac/Results/cardiac/Plots/DM/"
+pdf(paste0(out.dir, "annot.perc.myDiff25p0_01p_CpG_dT_tiles_win500bp_step500bp_batch123_noCAD.pdf"))
+library(pheatmap)
+mat.DMCpairwise.annot.perc = do.call("cbind", lapply(1:length(dmc_treat.annot_25p0_01q), 
+  function(i) dmc_treat.annot_25p0_01q[[i]]@annotation))
+#colnames(mat.DMCpairwise.annot.perc) = c("ACS/Stemi","ACS/Nstemi" ,"ACS/iAP","CAD+posStressEcho")
+# no CAD
+colnames(mat.DMCpairwise.annot.perc) = c("ACS_Stemi","ACS_Nstemi" ,"ACS_iAP","CAD+posStressEcho")
+mat.DMCpairwise.annot.perc = mat.DMCpairwise.annot.perc[,1:3]
+pheatmap(mat.DMCpairwise.annot.perc, cluster_rows=FALSE, cluster_cols=TRUE)
+dev.off()
+
+
+pdf(paste0(out.dir, "annot.num.myDiff25p0_01p_CpG_dT_tiles_win500bp_step500bp_batch123_noCAD.pdf"))
+library(pheatmap)
+mat.DMCpairwise.annot.perc = do.call("cbind", lapply(1:length(dmc_treat.annot_25p0_01q), 
+  function(i) dmc_treat.annot_25p0_01q[[i]]@num.annotation))
+#colnames(mat.DMCpairwise.annot.perc) = c("ACS/Stemi","ACS/Nstemi" ,"ACS/iAP","CAD+posStressEcho")
+#no CAD
+colnames(mat.DMCpairwise.annot.perc) = c("ACS_Stemi","ACS_Nstemi" ,"ACS_iAP","CAD+posStressEcho")
+mat.DMCpairwise.annot.perc = mat.DMCpairwise.annot.perc[,1:3]
+pheatmap(mat.DMCpairwise.annot.perc, cluster_rows=FALSE, cluster_cols=TRUE)
+dev.off()
+
+
+dmrs.names=c("ACS_Stemi","ACS_Nstemi" ,"ACS_iAP","CAD_posStressEcho")
+
+pdf(paste0(out.dir, 'annot.perc.myDiff25p0_01p_CpG_dT_tiles_win500bp_step500bp_batch123.pdf'))
+    for(i in 1:length(dmc_treat.annot_25p0_01q)){
+    
+    annot = dmc_treat.annot_25p0_01q[[i]]
+    
+    df=data.frame(Features=names(annot@annotation),
+                  Perc_overlap=annot@annotation)
+    p<-ggplot(data=df, aes(x=Features, y=Perc_overlap, fill=Features)) +
+      geom_bar(stat="identity") +
+      theme_minimal() +
+      theme(axis.text.x=element_text(angle=45, hjust=1)) +
+      labs(x = "Features", y=paste0(dmrs.names[i]," DMRs\noverlapping with features [%]"),
+        title =paste0(""))
+    print(p)
+    }
+dev.off()
+
+pdf(paste0(out.dir, 'annot.nbr.myDiff25p0_01p_CpG_dT_tiles_win500bp_step500bp_batch123.pdf'))
+   for(i in 1:length(dmc_treat.annot_25p0_01q)){
+
+   annot = dmc_treat.annot_25p0_01q[[i]]
+  df=data.frame(Features=names(annot@num.annotation),
+                Perc_overlap=annot@num.annotation)
+  p<-ggplot(data=df, aes(x=Features, y=Perc_overlap, fill=Features)) +
+    geom_bar(stat="identity") +
+    theme_minimal() +
+    theme(axis.text.x=element_text(angle=45, hjust=1)) +
+    labs(x = "Features", y=paste0("Number of ",dmrs.names[i]," DMRs\noverlapping with features [%]"),
+        title =paste0(""))
+  print(p)
+}
+dev.off()
+
+
+
+liftOver.hg38_to_hg19 = function(mycur){
+  require(rtracklayer)
+  #require(liftOver) #Failed with error:  ‘‘liftOver’ is not a valid installed package’; #TODO: I got this error, that's why I use import.chain function below
+  path = "/local/AAkalin_cardiac/Base/liftOver/hg38ToHg19.over.chain"
+  ch = import.chain(path)
+  seqlevelsStyle(mycur) = "UCSC"  # without it it doesn't work
+  cur19 = liftOver(mycur, ch)
+  cur19 = unlist(cur19)
+  genome(cur19) = "hg19"
+  return(cur19)
+}
+
+myDiff25p_tiled.hg19 = lapply(myDiff25p_tiled_list, function(dm){
+  liftOver.hg38_to_hg19(as(dm, "GRanges"))
+})
+
+
+require(rGREAT)
+# great.output.list = lapply(myDiff25p_tiled.hg19, function(dm){
+# job=submitGreatJob(dm, bg = NULL,
+#                      species               = "hg19",
+#                      includeCuratedRegDoms = TRUE,
+#                      #bgChoice              = ifelse(is.null(bg), "wholeGenome", "data"),
+#                      rule                  = c("basalPlusExt", "twoClosest", "oneClosest"),
+#                      adv_upstream          = 5.0,
+#                      adv_downstream        = 1.0,
+#                      adv_span              = 1000.0,
+#                      adv_twoDistance       = 1000.0,
+#                      adv_oneDistance       = 1000.0,
+#                      request_interval = 300,
+#                      max_tries = 10,
+#                      version = "default")
+  
+  
+# tb = getEnrichmentTables(job, ontology = c("GO Molecular Function" ,
+#                                              "GO Biological Process" ,
+#                                              "GO Cellular Component", 
+#                                              "BioCyc Pathway",
+#                                              "MSigDB Pathway",
+#                                              "MSigDB Oncogenic Signatures",
+#                                              "MSigDB Cancer Neighborhood",
+#                                              "Human Phenotype",
+#                                              "Disease Ontology",
+#                                              "Ensembl Genes"))
+# list(job=job,tb= tb)
+# })
+# saveRDS(great.output.list, paste0(dbdir.dm,"GREAT_myDiff25p0_01p_CpG_dT_tiles_win500bp_step500bp_batch123.RDS"))
+great.output.list = readRDS(paste0(dbdir.dm,"GREAT_myDiff25p0_01p_CpG_dT_tiles_win500bp_step500bp_batch123.RDS"))
+
+
+#pdf(paste0(dbdir.dm, 'plotRegionGeneAssociationGraphs_GREAT_myDiff25p0_01p_CpG_dT_tiles_win500bp_step500bp_batch123.pdf'))
+treat_c= c("ACS/Stemi","ACS/Nstemi" ,"ACS/iAP","CAD+posStressEcho")
+for(i in 1:length(great.output.list)){
+    job=great.output.list[[i]]$job
+    print(treat_c[i])
+  par(mfrow = c(1, 3))
+   plotRegionGeneAssociationGraphs(job)
+}
+#dev.off()
+
+great.genes=lapply(1:length(great.output.list), function(i){
+  job1=great.output.list[[i]]$job
+  great.genesi = plotRegionGeneAssociationGraphs(job1)
+  return(great.genesi)
+})
+
+#pdf(paste0(dbdir.dm, 'GEO_GREAT_myDiff25p0_01p_CpG_dT_tiles_win500bp_step500bp_batch123.pdf'), width=15)
+treat1=c("ACS/Stemi","ACS/Nstemi" ,"ACS/iAP","CAD+posStressEcho")
+lapply(1:length(treat1), function(treat_i){
+
+  treat=treat1[treat_i]
+  print(treat)
+
+  lapply(1:length(great.output.list[[treat_i]]$tb), function(tbl.i){
+ 
+    df= great.output.list[[treat_i]]$tb[[tbl.i]]
+    #df$value=df$Binom_Raw_PValue
+    df=df[1:10,]
+    g=ggplot(data=df, aes(x=name, y=Binom_Raw_PValue)) +
+    geom_bar(stat="identity", fill="steelblue")+
+    coord_flip() + scale_x_discrete(limits = rev(levels(df$name)))+
+    ggtitle(paste0(
+          names(great.output.list[[treat_i]]$tb)[tbl.i], ", treatment:",treat ))
+    plot(g)
+  })
+})
+#dev.off()
+
+
+
+require(enrichR)
+# dbs <- listEnrichrDbs() # all available databases
+# mydbs <- c(
+# "GO_Cellular_Component_2018" ,                      
+# "GO_Molecular_Function_2018" ,                      
+# "GO_Biological_Process_2018" 
+# )
+
+# enriched_list = lapply(1:length(great.genes), function(i){
+
+#   g=great.genes[[i]]$gene
+#   genes.to.enrichR <- g[!is.na(g)]
+#   #enriched <- enrichr(genes.to.enrichR, "GO_Cellular_Component_2018" )
+#   enrichr(genes.to.enrichR, mydbs )
+# })
+
+# treat1=c("ACS/Stemi","ACS/Nstemi" ,"ACS/iAP","CAD+posStressEcho")
+# for(i in 1:length(enriched_list)){
+
+#   enriched=enriched_list[[i]]
+#   treat = treat1[i]
+
+#   #pdf(paste0(dbdir.dm, 
+#   #  'GEO_ENRICHR_myDiff25p0_01p_CpG_dT_tiles_win500bp_step500bp_batch123_treatment_',
+#   #  stringr::str_replace_all(treat, "[[:punct:]]", ""),
+#   #  '.pdf'), width=15)
+#   require(ggplot2)
+#   lapply(1:length(enriched), function(tbl.i){
+ 
+#     df= enriched[[tbl.i]]
+#     df=df[1:10,]
+#     df$Term <- factor(df$Term, levels = df$Term)
+#     g=ggplot(data=df, aes(x=Term, y=Combined.Score)) +
+#         geom_bar(stat="identity", fill="steelblue")+
+#         coord_flip() + scale_x_discrete(limits = rev(levels(df$Term)))+
+#         ggtitle( paste0( names(enriched)[tbl.i], ", treatment:",treat ) )
+#     plot(g)
+
+#   })
+#   #dev.off()
+# }
+
+enrichrplots=sapply(treat1, function(treat){
+paste0(dbdir.dm, 
+    'GEO_ENRICHR_myDiff25p0_01p_CpG_dT_tiles_win500bp_step500bp_batch123_treatment_',
+    stringr::str_replace_all(treat, "[[:punct:]]", ""),
+    '.pdf')})
+
+include_graphics(enrichrplots, dpi = 300)
+
+
+```
+
+
+# Heatmap of DMRs
+```{r}
+
+mat=readRDS(paste0(RDS.outpath, "percMethylation_batch123.RDS"))
+
+percMethylation.methylKit.coo = function(methylBase.obj,rowids=FALSE,save.txt,chunk.size,return.type){
+  meth.fun = function(dt){
+    #data.table(paste(as.character(dt[[1]]),as.character(dt[[2]]),sep="."))
+    data.table(chr=as.character(dt[[1]]),start=as.numeric(dt[[2]]),
+      end=as.numeric(dt[[3]]))
+  } 
+  methylKit:::applyTbxByChunk(methylBase.obj@dbpath,
+                                         return.type = return.type,
+                                         chunk.size=chunk.size,
+                                         FUN = meth.fun)
+}
+mat.coo=percMethylation.methylKit.coo(meth.deT, save.txt=FALSE, 
+                              chunk.size=10000, 
+                              return.type="data.table")
+mat.coo.gr=makeGRangesFromDataFrame(mat.coo, end.field="end")
+
+
+subtypes.DMCtiled.means.l = lapply(1:length(myDiff25p_tiled_list), 
+                                 function(subtype_i){
+
+    #print(subtype_i)
+    myDiff25p.dt.i=myDiff25p_tiled_list[[subtype_i]]
+
+    subtype_i.means.l = mclapply(1:ncol(mat), function(j){
+
+      mat.coo.gr$score=mat[[j]]
+      sm <-ScoreMatrix(target=mat.coo.gr, 
+                      windows=as(myDiff25p.dt.i, "GRanges"), 
+                      strand.aware=FALSE, 
+                      weight.col="score", 
+                      is.noCovNA = TRUE)
+      sm.r.ave=rowMeans(sm, na.rm=TRUE)
+      mat.coo.gr$score=mat[[1]]<-NULL
+      return(sm.r.ave)
+
+    }, mc.cores=3)
+    subtype_i.means = do.call("cbind",subtype_i.means.l)
+    return(subtype_i.means)
+
+})
+
+subtypes.DMCtiled.means = do.call("rbind", subtypes.DMCtiled.means.l)
+subtypes.DMCtiled.means=subtypes.DMCtiled.means*100
+# saveRDS(subtypes.DMCtiled.means, 
+#   paste0(RDS.outpath,"subtypes.DMCtiled.means.RDS"))
+# saveRDS(mat.coo.gr, 
+#   paste0(RDS.outpath,"subtypes.DMCtiled.means.coordinates.RDS"))
+
+library(circlize)
+library(RColorBrewer)
+library(ComplexHeatmap)
+#pdf(paste0(dbdir.dm,"Diffmeth_heatmap_rowannot_rowsgrouping.pdf"), width=9)
+
+meth.max = if (max(subtypes.DMCtiled.means)==1) 1 else 100
+mycol <- colorRamp2(c(0, meth.max/2, meth.max), c("blue", "white", "red"))
+
+set2cols=brewer.pal(5, "Set2")
+col.group=set2cols[TBL$treatment+1]
+names(col.group) = TBL$treatment_descr
+ha <- HeatmapAnnotation(
+      Group=TBL$treatment_descr,
+      col=list(Group=col.group))
+
+r.col.group=set2cols[2:5]
+names(r.col.group) = 2:5
+r.treatment=rep(2:5, #if char vec then "Error in labels_mat[, i] : subscript out of bounds"
+  sapply(myDiff25p_tiled_list, nrow))
+
+ra <- rowAnnotation(DM_group=r.treatment,
+      col=list(DM_group=r.col.group))
+
+colnames(subtypes.DMCtiled.means) <- TBL$sample_ids
+
+Heatmap(as.matrix(subtypes.DMCtiled.means),
+  cluster_rows=TRUE,
+  cluster_columns=TRUE,
+  heatmap_legend_param = list(title = "Methylation [%]"),
+  row_title = "Differentially methylated regions",
+  column_title = "Cardiac samples",
+  top_annotation = ha,
+  right_annotation = ra,
+  col=mycol
+  )
+
+#dev.off()
+
+
+
+```

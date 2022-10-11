@@ -1,0 +1,243 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Here we checke CpG methylation on Cardiac Enhancer regions obtained from https://www.nature.com/articles/ng.1006 (https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM807735 and 
+https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM807734)
+
+
+```{r}
+require(tidyverse)
+library("liftOver")
+library(GenomicRanges)
+library(methylKit)
+```
+
+
+```{r}
+
+sample_ids = c('N1','N2','N3','N4','N5','N6','H26','H28',
+  'AC1','AC2','AC3','AC4','AC5','AC6','AC14','AC15',
+  'AC7','AC8','AC9','AC10','AC11','AC12','AC13',
+  'AP1','AP2','AP3','AP4','AP5','AP6')
+
+
+treatment1=c(
+    rep(0,8),  # control
+    rep(1,8), #stemi
+    rep(2,7),  # nstemi
+    rep(3,6) #Acs/iAP
+     )
+
+
+treatment_descr=c(
+  rep("Healthy",8),  # control
+  rep("Stemi",8), #stemi
+  rep("Nstemi",7),  # nstemi
+  rep("UA",6) #Acs/iAP
+)
+
+
+TBL = data.frame(sample_ids=sample_ids,
+                 treatment_descr=treatment_descr,
+                 treatment=treatment1,
+                 stringsAsFactors = FALSE)
+```
+
+```{r}
+#Make genomic ranges from adult and fetal cardiac enhancers
+
+adult_enh <- read.table("/local/rcuadrat/enhancers_heart/GSM807734_human_adult_heart_accbp-p300_peak.txt")
+adult_enh<-adult_enh %>% rename("chr"="V1","start"="V2","end"="V3","length"="V4")
+
+fetal_enh <- read.table("/local/rcuadrat/enhancers_heart/GSM807735_human_fetal_heart_accbp-p300_peak.txt")
+fetal_enh<-fetal_enh %>% rename("chr"="V1","start"="V2","end"="V3","length"="V4")
+adult_enh_gr<-makeGRangesFromDataFrame(adult_enh)
+fetal_enh_gr<-makeGRangesFromDataFrame(fetal_enh)
+```
+
+
+```{r}
+#chain object for liftover 
+chainObject <- import.chain("/local/AAkalin_cardiac/Base/liftOver/hg19ToHg38.over.chain")
+
+#lift over from h19 to h38
+fetal_enh_gr_hg38 <- unlist(liftOver(fetal_enh_gr, chainObject))
+adult_enh_gr_hg38 <- unlist(liftOver(adult_enh_gr, chainObject))
+```
+
+
+```{r}
+#find overlaps from enhancers fetal and adult
+overlaps=data.frame(findOverlaps(adult_enh_gr_hg38,fetal_enh_gr_hg38))
+overlaps_enh=adult_enh_gr_hg38[overlaps$queryHits]
+overlaps_enh=unique(overlaps_enh)
+```
+
+
+```{r}
+#methDB discovery
+methDB_discovery<-readRDS(file = "/local/rcuadrat/cfdna_validation/methDB_discovery.rds")
+
+```
+
+```{r}
+#methDB discovery restrict to cardiac enh 
+enh_discovery=regionCounts(object=methDB_discovery, regions=overlaps_enh, cov.bases=0,strand.aware=FALSE)
+
+```
+
+```{r}
+PCASamples(enh_discovery)
+legend("bottomleft",
+       legend=c("Healthy","Stemi","Nstemi" ,"UA"),
+       fill =rainbow(5)[c(0,1,2,3,4)+1],
+       border=1,
+       box.col=NA, 
+       cex=1)
+```
+```{r}
+#get percent methylation on discovery samples on enh regions
+enh_discovery_meth=percMethylation(enh_discovery,rowids = TRUE)
+enh_discovery_meth=data.frame(enh_discovery_meth)
+
+```
+
+
+```{r}
+#selecting CpGs where healthy samples all have more than 95% of methylation 
+enh_discovery_meth_health_95<-enh_discovery_meth %>% filter_at(vars('N1','N2','N3','N4','N5','N6','H26','H28'),all_vars(.>95))
+#reshaping the df 
+enh_discovery_meth_health_95_bar=reshape2::melt(enh_discovery_meth_health_95 %>% rownames_to_column(var = "DMR"))
+enh_discovery_meth_health_95_bar=enh_discovery_meth_health_95_bar %>% rename("sample_ids"="variable","Methylation %"="value")
+#merging  perc table with metadata about groups
+enh_discovery_meth_health_95_bar=merge(enh_discovery_meth_health_95_bar,TBL,by="sample_ids")
+#making treatment numeric with increasing severity. Treatment here means experimental group
+enh_discovery_meth_health_95_bar$treatment_descr<-str_replace(enh_discovery_meth_health_95_bar$treatment_descr,"Stemi","3")
+enh_discovery_meth_health_95_bar$treatment_descr<-str_replace(enh_discovery_meth_health_95_bar$treatment_descr,"Nstemi","2")
+enh_discovery_meth_health_95_bar$treatment_descr<-str_replace(enh_discovery_meth_health_95_bar$treatment_descr,"UA","1")
+enh_discovery_meth_health_95_bar$treatment_descr<-str_replace(enh_discovery_meth_health_95_bar$treatment_descr,"Healthy","0")
+enh_discovery_meth_health_95_bar$treatment_descr=as.numeric(enh_discovery_meth_health_95_bar$treatment_descr)
+
+
+#selecting CpGs where healthy samples all have more than 90% of methylation and doing the same of the code above
+
+enh_discovery_meth_health_90<-enh_discovery_meth %>% filter_at(vars('N1','N2','N3','N4','N5','N6','H26','H28'),all_vars(.>90))
+enh_discovery_meth_health_90_bar=reshape2::melt(enh_discovery_meth_health_90 %>% rownames_to_column(var = "DMR"))
+enh_discovery_meth_health_90_bar=enh_discovery_meth_health_90_bar %>% rename("sample_ids"="variable","Methylation %"="value")
+enh_discovery_meth_health_90_bar=merge(enh_discovery_meth_health_90_bar,TBL,by="sample_ids")
+enh_discovery_meth_health_90_bar$treatment_descr<-str_replace(enh_discovery_meth_health_90_bar$treatment_descr,"Stemi","3")
+enh_discovery_meth_health_90_bar$treatment_descr<-str_replace(enh_discovery_meth_health_90_bar$treatment_descr,"Nstemi","2")
+enh_discovery_meth_health_90_bar$treatment_descr<-str_replace(enh_discovery_meth_health_90_bar$treatment_descr,"UA","1")
+enh_discovery_meth_health_90_bar$treatment_descr<-str_replace(enh_discovery_meth_health_90_bar$treatment_descr,"Healthy","0")
+enh_discovery_meth_health_90_bar$treatment_descr=as.numeric(enh_discovery_meth_health_90_bar$treatment_descr)
+
+
+```
+
+```{r}
+#making lists of regions from the df above
+DMRs_enh_95<-unique(enh_discovery_meth_health_95_bar$DMR)
+DMRs_enh_90<-unique(enh_discovery_meth_health_90_bar$DMR)
+
+```
+
+
+
+```{r}
+#running linear models from the numeric "treatment" ~ %methylation for each ehn region (restricted for those >95% on all healthy)
+all_results<-list()
+for ( i in DMRs_enh_95 ){ 
+        tmp = enh_discovery_meth_health_95_bar %>% filter(DMR==i)
+        res=lm(tmp,formula = treatment_descr ~ `Methylation %`)
+        
+         #results_lm[[i]] <- res
+         #summaries[[i]] <- summary( res )
+         #pvalues[[i]] <- as.data.frame( summary( res )$coefficients[,4])
+         all_results[[i]]<- as.data.frame( summary( res )$coefficients)
+     
+        
+}
+
+DMRs_enh_95_LMs=do.call("rbind",all_results)
+DMRs_enh_95_LMs=DMRs_enh_95_LMs[!grepl('Intercept', row.names(DMRs_enh_95_LMs)),]
+DMRs_enh_95_LMs=rownames_to_column(as.data.frame(DMRs_enh_95_LMs), var = "DMR")
+DMRs_enh_95_LMs$DMR=str_replace(DMRs_enh_95_LMs$DMR,"\\.DMR_percMeth_ACS_markers\\[\\[i\\]\\]","")
+DMRs_enh_95_LMs =DMRs_enh_95_LMs %>% filter(`Pr(>|t|)` <= 0.05)
+
+```
+
+```{r}
+#running linear models from the numeric "treatment" ~ %methylation for each ehn region (restricted for those >90% on all healthy)
+
+all_results<-list()
+for ( i in DMRs_enh_90 ){ 
+        tmp = enh_discovery_meth_health_90_bar %>% filter(DMR==i)
+        res=lm(tmp,formula = treatment_descr ~ `Methylation %`)
+        
+         #results_lm[[i]] <- res
+         #summaries[[i]] <- summary( res )
+         #pvalues[[i]] <- as.data.frame( summary( res )$coefficients[,4])
+         all_results[[i]]<- as.data.frame( summary( res )$coefficients)
+     
+        
+}
+#getting the results of LM to a single dataframe and filtering by significance (p<=0.05)
+DMRs_enh_90_LMs=do.call("rbind",all_results)
+DMRs_enh_90_LMs=DMRs_enh_90_LMs[!grepl('Intercept', row.names(DMRs_enh_90_LMs)),]
+DMRs_enh_90_LMs=rownames_to_column(as.data.frame(DMRs_enh_90_LMs), var = "DMR")
+DMRs_enh_90_LMs$DMR=str_replace(DMRs_enh_90_LMs$DMR,"\\.DMR_percMeth_ACS_markers\\[\\[i\\]\\]","")
+DMRs_enh_90_LMs =DMRs_enh_90_LMs %>% filter(`Pr(>|t|)` <= 0.05)
+```
+
+
+```{r}
+#string manipulation to revove .`Methylation % from regions name
+DMRs_enh_90_LMs$DMR=gsub(".`Methylation %`","",DMRs_enh_90_LMs$DMR)
+```
+
+
+```{r}
+enh_discovery_meth_health_90_bar_lm_sig = subset(enh_discovery_meth_health_90_bar, DMR %in% DMRs_enh_90_LMs$DMR)
+```
+
+```{r,fig.width=14,fig.height=10}
+#plotting significant ones cutoff >90% on healthy
+ggscatter(enh_discovery_meth_health_90_bar_lm_sig, y = "Methylation %", x = "treatment_descr", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "treatment_descr", ylab = "% Methylation" )+ facet_wrap(~DMR)
+```
+
+
+
+
+```{r,fig.width=12}
+enh_discovery_meth_health_95_bar %>% 
+  ggplot(aes(x=sample_ids,y=`Methylation %`, fill=treatment_descr)) +
+  geom_boxplot() 
+```
+
+
+```{r,fig.width=12}
+enh_discovery_meth_health_90_bar %>% 
+  ggplot(aes(x=sample_ids,y=`Methylation %`, fill=treatment_descr)) +
+  geom_boxplot() 
+```
+
+
+```{r}
+enh_discovery_meth_bar=reshape2::melt(enh_discovery_meth)
+enh_discovery_meth_bar=enh_discovery_meth_bar %>% rename("sample_ids"="variable","Methylation %"="value")
+enh_discovery_meth_bar=merge(enh_discovery_meth_bar,TBL,by="sample_ids")
+```
+
+
+```{r,fig.width=10}
+enh_discovery_meth_bar %>% 
+  ggplot(aes(x=sample_ids,y=`Methylation %`, fill=treatment_descr)) +
+  geom_boxplot() 
+```
+
+
