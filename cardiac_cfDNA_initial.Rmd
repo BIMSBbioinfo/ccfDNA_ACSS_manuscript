@@ -27,7 +27,7 @@ The aim of this script is to compare the differential methylation (DM) between d
 
 # Libraries
 Load libraries and define directories
-```{r}
+```{r Load_Libraries}
 library(methylKit)
 library(data.table)
 library(genomation)
@@ -46,7 +46,7 @@ out.dir="/local/AAkalin_cardiac/Results/cardiac/Plots/DM/"
 ```
 
 Create metadata table
-```{r,results='asis'}
+```{r Create_metadata_table,results='asis'}
 sample_ids = c(
  'N1', # control
  'N2',
@@ -119,7 +119,7 @@ kable(TBL, caption="Description of cardiac cfDNA samples")
 # Alignment, coverage, and methylation statistics
 
 Functions
-```{r}
+```{r Functions}
 
 my.read.Tabix = function( dbpath,
                           dbtype,
@@ -211,7 +211,7 @@ objects that only bases with coverage from all samples are retained.
 
 Plot histograms of % methylation and coverage for each sample
 after filtering CpGs with at least 3 reads.
-```{r, echo = TRUE, out.width="30%"}
+```{r Methylation_Stats, echo = TRUE, out.width="30%"}
 # tabix.files.mb = lapply(tabix.files.filtered.dt, function(x) x$obj)
 # for(i in 1:length(tabix.files.mb)){
 #   png(paste0(PLOTS, 
@@ -255,7 +255,7 @@ include_graphics(myimages)
 
 
 Create a table with alignment and methylation statistics.
-```{r}
+```{r Alignment_and_methylation_statistics}
 
 # The bisulfite conversion rate of each base (non-CpG) can be calculated as T / (T + C) * 100, 
 # where T is thymine and C is cytosine read numbers on that base.
@@ -459,7 +459,7 @@ Tile CpGs into 500bp windows with step-size 500 bp, and
 unite CpGs from all samples into one object. Calculate
 % methylation for each CpG.
 
-```{r}
+```{r Tiling_and_union}
 
 # tiles.path=paste0(p06_methyl_calls, "/tileMethylCounts/")
 # tiles=tileMethylCounts(methRawList_fil, 
@@ -502,7 +502,7 @@ meth.deT=methylKit:::readMethylBaseDB(methT.path,"tabix",
 ```
 
 Make PCA from raw counts and from most differentially methylated tiles. Calculate methylation [%].
-```{r}
+```{r PCA}
 # using methylKit functions
 options(scipen=999)
 pdf("/local/AAkalin_cardiac/Results/cardiac/Plots/PCA/PCASamples_123batch.pdf")
@@ -579,7 +579,7 @@ dev.off()
 
 # Differential methylation
 Calculate differential methylation of each disease condition compared to healthy controls.
-```{r}
+```{r Differential_methylation_analysis}
 
 # for(treat in c("ACS/Stemi","ACS/Nstemi" ,"ACS/iAP","CAD+posStressEcho")){
 
@@ -670,7 +670,7 @@ barplot(as.matrix(dmc_treat_stats),
 
 
 # DMRs heatmap
-```{r}
+```{r Heatmap DMRs}
 methT.path = '/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/tileMethylCounts/methylBase_CpG_dT_tiles_win500bp_step500bp_123batch_v1.txt.bgz'
 meth.deT=methylKit:::readMethylBaseDB(methT.path,"tabix",
                  sample_ids, "hg38" ,"CpG",
@@ -820,7 +820,7 @@ dev.off()
 
 # Annotation of DMCs
 
-```{r, echo = TRUE, out.width="110%"}
+```{r DMC_annotation, echo = TRUE, out.width="110%"}
 ## - Cpg islands
 cpg_islands = readGeneric("/local/AAkalin_cardiac/Base/Annotation/hg38/cpgIslandExt_hg38.bed") # on beast
 cpg_islands$name="cpgi"
@@ -941,7 +941,7 @@ dev.off()
 # GREAT Analysis
 
 Associate biological functions to genomic regions.
-```{r, echo = TRUE, out.width="110%"}
+```{r GREAT_Analysis, echo = TRUE, out.width="110%"}
 liftOver.hg38_to_hg19 = function(mycur){
   require(rtracklayer)
   #require(liftOver) #Failed with error:  ‘‘liftOver’ is not a valid installed package’; #TODO: I got this error, that's why I use import.chain function below
