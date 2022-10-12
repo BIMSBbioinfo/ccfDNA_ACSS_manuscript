@@ -7,14 +7,9 @@ Short list select.
 
 
 ```{r}
-
 final_DMR_df_SDs_sorted<-readRDS("/local/rcuadrat/cfdna_wgbs/tmp_dfs/annotated_DMRs.RDS")
-
-
 ```
-
-
-
+Calculate sum of diseased sample and control SD
 ```{r}
 final_DMR_df_SDs_sorted <- lapply(final_DMR_df_SDs_sorted, function(i){
   tmp<-i
@@ -23,7 +18,7 @@ final_DMR_df_SDs_sorted <- lapply(final_DMR_df_SDs_sorted, function(i){
 })
 ```
 
-
+Filter for disgenet heart disease relation
 ```{r}
 final_DMR_df_SDs_sorted_disease_related <- lapply(final_DMR_df_SDs_sorted, function(i){
   
@@ -32,7 +27,7 @@ final_DMR_df_SDs_sorted_disease_related <- lapply(final_DMR_df_SDs_sorted, funct
 })
 ```
 
-
+Filter for no disgenet heart disease relation
 ```{r}
 final_DMR_df_SDs_sorted_not_disease_related <- lapply(final_DMR_df_SDs_sorted, function(i){
   
@@ -41,28 +36,19 @@ final_DMR_df_SDs_sorted_not_disease_related <- lapply(final_DMR_df_SDs_sorted, f
 })
 ```
 
-
-
-
-
 Now short list for paper - excluding CAD and re-check "exclusivity", considering only ACS
-
-
 ```{r}
 final_ACS<-final_DMR_df_SDs_sorted[-5:-4]
 ```
 
-
+Filter DMRs by disease type
 ```{r}
 final_ACS$ACS_Stemi <- final_ACS$ACS_Stemi %>% filter(!grepl("iAP",present_in_groups) & !grepl("Nstemi",present_in_groups))
 final_ACS$ACS_Nstemi <- final_ACS$ACS_Nstemi %>% filter(!grepl("iAP",present_in_groups) & !grepl("Stemi",present_in_groups))
 final_ACS$ACS_iAP <- final_ACS$ACS_iAP %>% filter(!grepl("Nstemi",present_in_groups) & !grepl("Stemi",present_in_groups))
-
-
 ```
 
-
-
+Filter for disgenet relation to heart disease 
 ```{r}
 final_DMR_df_SDs_sorted_disease_related_ACS <- lapply(final_ACS, function(i){
   
@@ -71,7 +57,7 @@ final_DMR_df_SDs_sorted_disease_related_ACS <- lapply(final_ACS, function(i){
 })
 ```
 
-
+Filter for no disgenet relation to heart disease 
 ```{r}
 final_DMR_df_SDs_sorted_not_disease_related_ACS <- lapply(final_ACS, function(i){
   
