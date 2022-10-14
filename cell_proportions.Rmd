@@ -183,6 +183,7 @@ decon_nnls_extended_tgs.m_normalized
 
 Plot results
 ```{r Plot_Results,fig.height=16,fig.width=10}
+#Final Publication Figure 2
 bp_decon_nnls_extended <- ggplot2::ggplot(decon_nnls_extended_tgs.m, ggplot2::aes(x=reorder(variable,value), y=value, fill=factor(treatment_descr))) + ggplot2::geom_boxplot()
 
 bp_decon_nnls_extended + ggplot2::theme(legend.text=element_text(size=14),axis.text.x = ggplot2::element_text(size=14),axis.text.y = ggplot2::element_text(size=14), plot.title = ggplot2::element_text(size=14)) + ggplot2::labs(fill="Treatment",x = "Cell Type", y = "Proportion of Sample") + coord_flip()
