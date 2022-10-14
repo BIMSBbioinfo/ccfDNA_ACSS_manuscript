@@ -245,6 +245,7 @@ saveRDS(decon_nnls_extended_all_short,"decon_nnls_extended_all_short.RDS")
 
 # Plotting
 ```{r Plot_haematological_cell_types_shorter_with_axis_labels}
+#Final publication Figure 2 is plotted here
 bp_decon_nnls_extended <- ggplot2::ggplot(decon_nnls_extended_all_short_even_shorter %>% filter(method == "% of cell/tissue"), ggplot2::aes(x=variable, y=value, fill=factor(treatment_descr))) + ggplot2::geom_boxplot()
 
 bp_decon_nnls_extended +   theme_Publication() + scale_fill_Publication() + ggplot2::theme(axis.text.x = element_blank(),strip.text = element_text(size=12),legend.text=element_text(size=14),axis.title.x = element_blank()) + ggplot2::labs(fill="Group",x = "treatment_descr", y = "% of cell/tissue") + ggplot2::facet_wrap(~variable, scale="free",ncol = 4) 
