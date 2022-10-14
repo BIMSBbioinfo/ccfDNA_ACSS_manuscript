@@ -191,9 +191,8 @@ corr_biomarkers <- cor(table_markers_ACS  %>% dplyr::select("ng ccfDNA /mL plasm
 ```{r Save_Correlation_Plot}
 
 # pdf(file = "/local/AAkalin_cardiac/Results/cardiac/Plots/Figure1b.pdf")
-# corrplot(corr_biomarkers, tl.col = "brown", tl.srt = 30, bg = "White",
-#          title = "",
-#          type = "lower")
+Figure1B<-corrplot(corr_biomarkers, tl.col = "black", tl.srt = 30, bg = "White",
+         type = "lower")
 # dev.off()
 ```
 
@@ -228,7 +227,8 @@ plot_a<-ggplot(table_markers, aes(x=as.factor(treatment_descr), y=`TroponinT (ng
       theme(panel.grid.major = element_blank()) +
       scale_fill_manual(values=group.colors) +
       scale_fill_Publication() +theme_Publication() +
-      theme(legend.position="none")
+      theme(legend.position="none")+
+      scale_x_discrete(labels=c("STEMI","NSTEMI","UA","Healthy")) 
 ```
 
 ```{r LVEF_Boxplot}
@@ -243,7 +243,8 @@ plot_b<-ggplot(table_markers, aes(x=as.factor(treatment_descr), y=`LVEF(%)`, fil
       theme(panel.grid.major = element_blank()) +
       scale_fill_manual(values=group.colors)+
       scale_fill_Publication() +theme_Publication() +
-      theme(legend.position="none")
+      theme(legend.position="none")+
+      scale_x_discrete(labels=c("STEMI","NSTEMI","UA","Healthy"))
 ```
 
 ```{r CK_Boxplot}
@@ -258,7 +259,8 @@ plot_c<-ggplot(table_markers, aes(x=as.factor(treatment_descr), y=`CK (U/l)`, fi
       theme(panel.grid.major = element_blank()) + 
       scale_fill_manual(values=group.colors)+
       scale_fill_Publication() +theme_Publication() +
-      theme(legend.position="none")
+      theme(legend.position="none")+
+      scale_x_discrete(labels=c("STEMI","NSTEMI","UA","Healthy"))
 ```
 ```{r CK_Max_Boxplot}
 plot_d<-ggplot(table_markers, aes(x=as.factor(treatment_descr), y=`CK max (U/l)`, fill=as.factor(treatment_descr))) + 
@@ -272,7 +274,8 @@ plot_d<-ggplot(table_markers, aes(x=as.factor(treatment_descr), y=`CK max (U/l)`
       theme(panel.grid.major = element_blank()) + 
       scale_fill_manual(values=group.colors)+
       scale_fill_Publication() +theme_Publication() +
-      theme(legend.position="none")
+      theme(legend.position="none")+
+      scale_x_discrete(labels=c("STEMI","NSTEMI","UA","Healthy"))
 ```
 ```{r CK-MB_Boxplot}
 plot_e<-ggplot(table_markers, aes(x=as.factor(treatment_descr), y=`CK-MB (U/l)`, fill=as.factor(treatment_descr))) + 
@@ -286,7 +289,8 @@ plot_e<-ggplot(table_markers, aes(x=as.factor(treatment_descr), y=`CK-MB (U/l)`,
       theme(panel.grid.major = element_blank()) + 
       scale_fill_manual(values=group.colors)+
       scale_fill_Publication() +theme_Publication() +
-      theme(legend.position="none")
+      theme(legend.position="none")+
+      scale_x_discrete(labels=c("STEMI","NSTEMI","UA","Healthy"))
 ```
 
 
@@ -302,15 +306,16 @@ plot_f<-ggplot(table_markers, aes(x=as.factor(treatment_descr), y=`CK-MB max (U/
       theme(panel.grid.major = element_blank()) + 
       scale_fill_manual(values=group.colors)+
       scale_fill_Publication() +theme_Publication() +
-      theme(legend.position="none")
+      theme(legend.position="none")+
+      scale_x_discrete(labels=c("STEMI","NSTEMI","UA","Healthy"))
 ```
 
 ```{r Export_Figure_1, fig.height = 16, fig.width = 12}
 # pdf(file = "/local/AAkalin_cardiac/Results/cardiac/Plots/FigureS1.pdf")
-# ggarrange(plot_a, plot_b, plot_c,  plot_d,plot_e,plot_f, 
-#           labels = c("A", "B", "C","D","E","F"),
-#           ncol = 2, nrow = 3)
-# dev.off()
+ggarrange(plot_a, plot_b, plot_c,  plot_d,plot_e,plot_f,
+          labels = c("A", "B", "C","D","E","F"),
+          ncol = 2, nrow = 3)
+ #dev.off()
 ```
 Export publication ready figure
 
@@ -345,9 +350,9 @@ p2<-ggplot(suppl_tbl_2, aes(x=Sample, y=Average_CpG_coverage, fill=treatment_des
 ```
 
 
-```{r Export_Figure_2, fig.height = 8, fig.width = 20}
+```{r Export_Figure_S2, fig.height = 8, fig.width = 20}
 # pdf(file = "/local/AAkalin_cardiac/Results/cardiac/Plots/FigureS2.pdf",height = 8,width = 20)
-# cowplot::plot_grid(p1,p2,labels="AUTO",rel_widths  = c(19/40, 22/40))
+cowplot::plot_grid(p1,p2,labels="AUTO",rel_widths  = c(19/40, 22/40))
 # dev.off()
 ```
 
@@ -358,7 +363,7 @@ suppl_tbl_2$cfDNA_ug_per_ml_plasma <- (suppl_tbl_2$total_amount_cfDNA_ug/suppl_t
 ```
 
 ```{r Amout_cfDNA_Plot,fig.height = 5, fig.width = 8}
-ggplot(suppl_tbl_2, aes(x=as.factor(treatment_descr), y=cfDNA_ug_per_ml_plasma, fill=as.factor(treatment_descr))) + 
+Figure1A<-ggplot(suppl_tbl_2, aes(x=as.factor(treatment_descr), y=cfDNA_ug_per_ml_plasma, fill=as.factor(treatment_descr))) + 
       geom_boxplot(alpha=0.9) + 
       geom_jitter(shape=16, position=position_jitter(0.2)) + 
       xlab("") +
@@ -366,8 +371,11 @@ ggplot(suppl_tbl_2, aes(x=as.factor(treatment_descr), y=cfDNA_ug_per_ml_plasma, 
       #ggtitle(paste(t," ","DMR ",title)) +
       theme(plot.title = element_text(size=13,hjust = 0.5)) +
       theme(panel.grid.major = element_blank()) +
-      scale_fill_Publication() +theme_Publication() +
-      theme(legend.position="none") + theme(text = element_text(size=18))
+      scale_fill_Publication() +
+      theme_Publication() +
+      theme(legend.position="none") + 
+      theme(text = element_text(size=18))+
+  scale_x_discrete(labels=c("STEMI","NSTEMI","UA","Healthy")) 
 
 # ggsave(
 #   "/local/AAkalin_cardiac/Results/cardiac/Plots/Figure1A.pdf",
@@ -403,7 +411,7 @@ wilcox.test(x$total_amount_cfDNA_ug,y$total_amount_cfDNA_ug, alternative = "two.
 
 
 ```
-Perform non-parametric two-sided Wicoxon rank sum test between all conditions, but too little observations for all cases
+Perform non-parametric two-sided Wilcoxon rank sum test between all conditions, but too little observations for all cases
 
 
 ## Genome equivalents
@@ -417,7 +425,9 @@ ggplot(suppl_tbl_2, aes(x=as.factor(treatment_descr), y=genome_equivalents_per_m
       #ggtitle(paste(t," ","DMR ",title)) +
       theme(plot.title = element_text(size=13,hjust = 0.5)) +
       theme(panel.grid.major = element_blank()) + 
-      scale_fill_manual(values=group.colors)
+      scale_fill_manual(values=group.colors)+
+    scale_x_discrete(labels=c("STEMI","NSTEMI","UA","Healthy")) 
+
 ```
 
 ## Results From Differential Methylation Analysis
@@ -480,7 +490,7 @@ legend("bottomright",
                       skip=0)
    })
 
-#giving names to the itens in the list
+#giving names to the items in the list
 names(dmc_treat)<-unique(TBL$treatment_descr)[-1]
 ```
 
@@ -622,7 +632,10 @@ ggplot(all_annot_summary_alltypes, aes(x=annot.type, y=n,fill=group))+
   theme(text = element_text(size=16)) +
   theme(axis.text.x = element_text(angle = 45, vjust = 0.99, hjust=1)) +
   coord_flip() + facet_wrap(. ~type,scales='free') + 
-  scale_fill_manual(values=group.colors_3) + scale_fill_Publication() +theme_Publication()
+  scale_fill_manual(values=group.colors_3) + 
+  scale_fill_Publication() +
+  theme_Publication()
+
   
 # ggsave(
 #   "/local/AAkalin_cardiac/Results/cardiac/Plots/Figure3B.pdf",
@@ -807,7 +820,7 @@ f4b<-ggplot(Digenet_enrch_for_heat_na , aes(x = group, y = Description, fill = -
 
 ```{r Export_Figure_4, fig.height = 10, fig.width = 13}
 # pdf(file = "/local/AAkalin_cardiac/Results/cardiac/Plots/Figure4.pdf",height = 10,width = 13)
-# cowplot::plot_grid(f4a,f4b,labels="AUTO",rel_widths  = c(2/4, 2/4))
+#cowplot::plot_grid(f4a,f4b,labels="AUTO",rel_widths  = c(2/4, 2/4))
 # dev.off()
 ```
 
@@ -897,7 +910,7 @@ name_gs_e_ACS=c("Stemi","Nstemi","UA")
 names(v_ACS)<-name_gs_e_ACS
 
 # pdf(file="/local/AAkalin_cardiac/Results/cardiac/Plots/Figure3A.pdf",width=8, height=6)
-# UpSetR::upset(UpSetR::fromList(v_ACS),sets=c("UA","Nstemi","Stemi"),keep.order=TRUE,text.scale=1.8)
+ UpSetR::upset(UpSetR::fromList(v_ACS),sets=c("UA","Nstemi","Stemi"),keep.order=TRUE,text.scale=1.8)
 # dev.off()
 
 
@@ -1032,6 +1045,7 @@ corr_biomarkers <- cor(DMR_percMeth_ACS_markers  %>% dplyr::select("treatment","
 ```{r}
 corr_biomarkers
 ```
+
 ```{r}
 stemi_for_merge_lm<-final_DMR_df_SDs_sorted_annotated$ACS_Stemi %>% dplyr::select(seqnames,start,end,gene,distTSS,meth.diff,qvalue,present_in_groups,enhancer_roadmap,annot.id,specific,heart_disease_related_disgenet,heart_disease_name_disgenet)
 nstemi_for_merge_lm<-final_DMR_df_SDs_sorted_annotated$ACS_Nstemi %>% dplyr::select(seqnames,start,end,gene,distTSS,meth.diff,qvalue,present_in_groups,enhancer_roadmap,annot.id,specific,heart_disease_related_disgenet,heart_disease_name_disgenet)
@@ -1118,15 +1132,37 @@ group=treatment_descr
 
 
 ```{r Export_Figure_5b, fig.width=8,fig.height=8}
-p<-ggplot(pca_out,aes(x=PC1,y=PC2,color=group,label=Row.names,fill=as.factor(treatment_descr) )) + 
+p<-ggplot(pca_out , aes(x=PC1,y=PC2, color=group, label=Row.names, fill=as.factor(treatment_descr) )) + 
   geom_text(size=4,aes(label=Row.names, colour=treatment_descr)) +
   scale_colour_manual(values = c("#386cb0","#f87f01","#7fc97f","#ef3b2c","#feca01","#a6cee3","#fb9a99","#984ea3","#8C591D"))  + 
   theme_bw() + 
-  theme(legend.position = "bottom") + theme(text = element_text(size=20))
+  theme(legend.position = "bottom") + theme(text = element_text(size=20))+
+  scale_x_discrete(labels=c("STEMI","NSTEMI","UA","Healthy")) 
+
+
+
+
+
+test<-ggplot(pca_out%>% dplyr::mutate(group=case_when(treatment_descr=="Nstemi" ~ "NSTEMI",
+                                                      treatment_descr=="Stemi" ~ "STEMI",
+                                                      treatment_descr=="UA" ~ "UA",
+                                                      treatment_descr=="Healthy" ~ "Healthy")) %>% 
+               dplyr::mutate(group== factor(group, levels=c("STEMI", "NSTEMI", "UA", "Healthy"))), 
+             aes(x=PC1,y=PC2, colour=group)) + 
+  geom_point(size=3) +
+  scale_colour_manual(values = c("#386cb0","#f87f01","#7fc97f","#ef3b2c","#feca01","#a6cee3","#fb9a99","#984ea3","#8C591D"))  + 
+  theme_Publication() + 
+  scale_y_continuous(breaks=c(-200, -100, 0, 100, 200))+
+  scale_x_continuous(breaks=c(-200, -100, 0, 100, 200))+
+  theme(legend.position = "bottom", 
+        text = element_text(size=20),
+        aspect.ratio = 1)
+test
+
+
 
 
 p
-
 # ggsave(
 #   "/local/AAkalin_cardiac/Results/cardiac/Plots/Figure5b.pdf",
 #   device = "pdf",

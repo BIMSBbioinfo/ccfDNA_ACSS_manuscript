@@ -13,7 +13,7 @@ date: "`r Sys.Date()`"
 ---
 
 # GOAL
-Design probes for targeted sequencing of validation cohort by identifying the DMR overlap with disease associated regions and probes fromt the methylation atlas.
+Design probes for targeted sequencing of validation cohort by identifying the DMR overlap with disease associated regions and probes from the methylation atlas.
 
 # Load Libraries
 ```{r Load_libraries}
@@ -234,7 +234,7 @@ ggplot(data=cov_not_target  %>% gather(),aes(value)) +
     facet_wrap(~key, scales = 'free_x')
 ```
 
-# Design probes for targeted sequencing
+# Assign coordinates to targeted sequencing and check results
 ```{r Read_in_probes_methatlas}
 probes = readRDS("~/illumina_probes_hg38_GRanges.RDS")
 refExtended = read.csv("/local/agosdsc/projects/AAkalin_cfdTissue/results/extendedReference.csv")
