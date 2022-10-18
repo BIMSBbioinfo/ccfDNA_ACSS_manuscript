@@ -57,6 +57,7 @@ The main content of each script is stated below:
 #### **validation_ACS.Rmd**
 - Transfer DMRs distinguishing between disease conditions from discovery to validation cohort
 
+
 ## **Data availability**
 All raw **methylKit objects** (tabix format) can be downloaded from the following links:
 
