@@ -43,6 +43,7 @@ The main content of each script is stated below:
 #### **Targeted_Seq_Normalization_and_DMR_Validation.Rmd**
 - Visualization and removal of sequencing bias between WGBS and targeted sequencing
 - Validation of DMRS distinguishing between disease conditions (identified from discovery cohort)
+- Plotting Figure 6
 
 
 #### **descriptive_stats.Rmd**
