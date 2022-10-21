@@ -120,8 +120,8 @@ methRawList_fil_discovery=new("methylRawList",
    treatment=c(treatment_no_cad))
                               
 #saving
-saveRDS(methRawList_fil,"methRawList_validation.rds")
-saveRDS(methRawList_fil_discovery,"methRawList_discovery.rds")
+#saveRDS(methRawList_fil,"methRawList_validation.rds")
+#saveRDS(methRawList_fil_discovery,"methRawList_discovery.rds")
                               
                               
                               
@@ -134,13 +134,13 @@ methRawList_fil_all=new("methylRawList",
    treatment=c(groups_v_no_cad,treatment_no_cad))
 
 #save methraw list
-saveRDS(methRawList_fil_all, file = "methRawList_fil_all.rds")
+#saveRDS(methRawList_fil_all, file = "methRawList_fil_all.rds")
 
 #unite all methRaw objects in the list for one methDB                        
 methDB_all<-methylKit::unite(methRawList_fil_all,save.db = TRUE,dbdir=getwd(),destrand = TRUE)
 
 #save methdb
-saveRDS(methDB_all, file = "methDB_all.rds")                              
+#saveRDS(methDB_all, file = "methDB_all.rds")                              
 ```
 
 ## Unifing the MethRaw objects in a methDB for validation and discovery
@@ -155,8 +155,8 @@ methDB_discovery=methylKit::unite(methRawList_fil_discovery,destrand = TRUE)
 
 ```{r Save}
 #saving
-saveRDS(methDB, file = "methDB_validation.rds")
-saveRDS(methDB_discovery, file = "methDB_discovery.rds")
+#saveRDS(methDB, file = "methDB_validation.rds")
+#saveRDS(methDB_discovery, file = "methDB_discovery.rds")
 ```
 
 ```{r Get_Perc_Meth}
@@ -204,7 +204,7 @@ annotated_DMRs_ACS<-list(annotated_DMRs$ACS_Stemi,annotated_DMRs$ACS_Nstemi,anno
 
 #make a single dataframe with all coordinates of all DMRs (from all conditions) from discovery
 concat_DMRs<-do.call(rbind, annotated_DMRs_ACS)
-concat_DMRs <- concat_DMRs %>% select(seqnames,start,end) %>% unique()
+concat_DMRs <- concat_DMRs %>% dplyr::select(seqnames,start,end) %>% unique()
 
 #make a genomic range out of it
 ranges_DMR<-makeGRangesFromDataFrame(concat_DMRs)
@@ -229,7 +229,7 @@ regional.methylRaw=regionCounts(object=methRawList_fil_all, regions=ranges_DMR, 
 
 #and unifiyin it
 methDB_all_DRMs<-methylKit::unite(regional.methylRaw,destrand = TRUE)
-saveRDS(methDB_all_DRMs, file = "methDB_all_DMR.rds")
+#saveRDS(methDB_all_DRMs, file = "methDB_all_DMR.rds")
 
 
 
@@ -292,7 +292,7 @@ methDB_DMR_validation_narrow_perc_top
 ```
 
 ```{r}
-methDB_DMR_validation_narrow_perc_top=reshape2::melt(methDB_DMR_validation_narrow_perc_top) %>% rename("DMR"="Var1","Sample"="Var2")
+methDB_DMR_validation_narrow_perc_top=reshape2::melt(methDB_DMR_validation_narrow_perc_top) %>% dplyr::rename("DMR"="Var1","Sample"="Var2")
 ```
 
 ```{r}
@@ -300,7 +300,7 @@ methDB_DMR_validation_narrow_perc_top=merge(methDB_DMR_validation_narrow_perc_to
 ```
 
 ```{r}
-saveRDS(methDB_DMR_validation_narrow_perc_top,"methDB_DMR_validation_narrow_perc_top.RDS")
+#saveRDS(methDB_DMR_validation_narrow_perc_top,"methDB_DMR_validation_narrow_perc_top.RDS")
 ```
 
 ```{r}
@@ -328,7 +328,7 @@ scale_x_continuous(breaks=c(1,2,3)) + theme(text = element_text(size=18))
 ```
 
 ```{r}
-saveRDS(regional.methylRaw, file = "methRaw_all_DMR.rds")
+#saveRDS(regional.methylRaw, file = "methRaw_all_DMR.rds")
 
 ```
 
@@ -427,7 +427,7 @@ dev.off()
 NROW(getData(methDB_DMR_discovery))
 ```
 
-```{r}
+```{r Supplementary_FigureS3}
 #PCA discovery for only DMRs
 pdf("/local/AAkalin_cardiac/Results/cardiac/Plots/discovery_DMRs_PCA.pdf")
 
