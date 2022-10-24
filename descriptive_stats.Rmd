@@ -355,6 +355,7 @@ plot_c <- ggplot(table_markers, aes(x = as.factor(treatment_descr), y = `CK (U/l
   scale_x_discrete(labels = c("STEMI", "NSTEMI", "UA", "Healthy"))
 plot_c
 ```
+
 ```{r CK_Max_Boxplot}
 plot_d <- ggplot(table_markers, aes(x = as.factor(treatment_descr), y = `CK max (U/l)`, fill = as.factor(treatment_descr))) +
   geom_boxplot(alpha = 0.9) +
@@ -431,35 +432,35 @@ Figure_S2A <- ggplot(suppl_tbl_2, aes(x = Sample, y = BS_conversion_rate, fill =
   geom_bar(stat = "identity") +
   coord_cartesian(ylim = c(90, 100)) +
   theme(text = element_text(size = 24)) +
-  scale_fill_Publication() +
+  scale_fill_Publication(labels = c("STEMI", "NSTEMI", "UA", "Healthy")) +
+  labs(y="BS conversion rate")+
   theme_Publication() +
-  theme(axis.text.x = element_text(angle = 90), axis.title.x = element_blank()) +
-  theme(legend.title = element_blank()) +
-  theme(legend.position = "none") +
-  theme(text = element_text(size = 24))
+  theme(axis.text.x = element_text(angle = 90), axis.title.x = element_blank(),
+        legend.position = "none",
+        text = element_text(size = 24))
 Figure_S2A
 ```
-
-
 
 ```{r Average_CpG_Coverage_Plot, fig.height = 5, fig.width = 12}
 Figure_S2B <- ggplot(suppl_tbl_2, aes(x = Sample, y = Average_CpG_coverage, fill = treatment_descr)) +
   geom_bar(stat = "identity") +
   scale_y_continuous(expand = expansion(mult = c(0, .1))) +
-  scale_fill_Publication() +
+  scale_fill_Publication(labels = c("STEMI", "NSTEMI", "UA", "Healthy")) +
+  labs(y="Aveerage CpG coverage", fill="Group")+
   theme_Publication() +
-  theme(axis.text.x = element_text(angle = 90), axis.title.x = element_blank()) +
-  theme(legend.title = element_blank()) +
-  theme(legend.position = "right", legend.direction = "vertical") +
-  theme(text = element_text(size = 24))
+  theme(axis.text.x = element_text(angle = 90), 
+        axis.title.x = element_blank(),
+        legend.position = "right", 
+        legend.direction = "vertical",
+        text = element_text(size = 24))
 Figure_S2B
 ```
 
 
 ```{r Export_Figure_S2, fig.height = 8, fig.width = 20}
-# pdf(file = "/local/AAkalin_cardiac/Results/cardiac/Plots/FigureS2.pdf",height = 8,width = 20)
+png(file = "/local/AAkalin_cardiac/Results/cardiac/Plots/FigureS2.png",height = 8,width = 20)
 cowplot::plot_grid(Figure_S2A, Figure_S2B, labels = "AUTO", rel_widths = c(19 / 40, 22 / 40))
-# dev.off()
+dev.off()
 ```
 
 ## Amount of cfDNA 
@@ -885,9 +886,9 @@ Digenet_enrch_for_heat$group <- factor(Digenet_enrch_for_heat$group, levels = c(
 ```
 
 ```{r,fig.height = 10, fig.width = 8}
-# testing grey on not sig
+#testing grey on not sig
 # Digenet_enrch_for_heat_na<-Digenet_enrch_for_heat %>% mutate(qvalue = ifelse(qvalue <= 0.05, qvalue, NA))
-#
+# 
 # ggplot(Digenet_enrch_for_heat_na , aes(x = group, y = Description, fill = -log10(qvalue) )) +
 #   ylab("Disease") +
 #   xlab("") +
@@ -901,7 +902,7 @@ Digenet_enrch_for_heat$group <- factor(Digenet_enrch_for_heat$group, levels = c(
 #   xlab("") +
 #   geom_tile() +
 #   theme_Publication()
-#
+
 # ggsave(
 #   "/local/AAkalin_cardiac/Results/cardiac/Plots/Figure7.pdf",
 #   device = "pdf",
@@ -1206,7 +1207,7 @@ for (n in marker_names) {
   test_all_adj <- do.call("rbind", all_results_adj)
   test_all_adj <- test_all_adj[!grepl("Intercept", row.names(test_all_adj)), ]
   test_all_adj <- test_all_adj[!grepl("ccfDNA_ng_per_ml_plasma", row.names(test_all_adj)), ]
-  test_all_adj <- rownames_to_column(as.data.frame(test_all_adj), var = "DMR")
+  test_all_adj <- tibble::rownames_to_column(as.data.frame(test_all_adj), var = "DMR")
   test_all_adj <- test_all_adj %>% separate(DMR, c("DMR", "marker"), ".DMR_")
   # test_all_adj$marker=str_replace(test_all_adj$marker,"\\$\\`","")
   # test_all_adj$marker=str_replace(test_all_adj$marker,"\\`","")
@@ -1217,14 +1218,14 @@ for (n in marker_names) {
   # model 3,just biomarkers ~ DMR
   test_all_3 <- do.call("rbind", all_results_3)
   test_all_3 <- test_all_3[!grepl("Intercept", row.names(test_all_3)), ]
-  test_all_3 <- rownames_to_column(as.data.frame(test_all_3), var = "DMR")
+  test_all_3 <- tibble::rownames_to_column(as.data.frame(test_all_3), var = "DMR")
   test_all_3$DMR <- str_replace(test_all_3$DMR, "\\.DMR_percMeth_ACS_markers\\[\\[i\\]\\]", "")
   test_all_3$marker <- n
   test_all_3 <- test_all_3 %>% filter(`Pr(>|t|)` <= 0.05)
 
   # collecting anova results
   test_anova_all <- do.call("rbind", test_anova)
-  test_anova_all <- test_anova_all %>% filter(`Pr(>F)` <= 0.05)
+  test_anova_all <- test_anova_all %>% dplyr::filter(`Pr(>F)` <= 0.05)
 
 
   LM_tests_adj[[n]] <- test_all_adj
