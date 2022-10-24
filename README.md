@@ -62,11 +62,11 @@ The main content of each script is stated below:
 - Plotting of Supplementary Figure S4
 
 
-#### **ranking_v3.Rmd
+#### **ranking_v3.Rmd**
 - annotates DMRs for the groups, adding gene info, GO, phenotype associations, DO and disgenet associations
 
 
-#### **RoadMap_enrichment.Rmd
+#### **RoadMap_enrichment.Rmd**
 - Enrichment analysis, Fisher's exact test for cell types on DMRs
 - Plotting of Figure S5
 
