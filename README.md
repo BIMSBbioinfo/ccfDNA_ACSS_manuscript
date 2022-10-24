@@ -43,7 +43,7 @@ The main content of each script is stated below:
 #### **Targeted_Seq_Normalization_and_DMR_Validation.Rmd**
 - Visualization and removal of sequencing bias between WGBS and targeted sequencing
 - Validation of DMRS distinguishing between disease conditions (identified from discovery cohort)
-- Plotting Figure 6
+- Plotting of Figure 6 and Suplementary Figure S6
 
 
 #### **descriptive_stats.Rmd**
@@ -53,10 +53,27 @@ The main content of each script is stated below:
 - Average CpG coverage
 - Amount ccfDNA analysis
 - Identification of 254 DMRs associated with disease groups on linear models
-- Plotting Figure 1, 3, 4, 5
+- Plotting Figure 1, 3, 4, 5 and Supplementary Figure S1 and S2
+
+
+#### **report_DMRs.Rmd**
+- builds upon **ranking_v3.Rmd**
+- DMR analysis comparing each disease group vs. healthy controls
+- Plotting of Supplementary Figure S4
+
+
+#### **ranking_v3.Rmd
+- annotates DMRs for the groups, adding gene info, GO, phenotype associations, DO and disgenet associations
+
+
+#### **RoadMap_enrichment.Rmd
+- Enrichment analysis, Fisher's exact test for cell types on DMRs
+- Plotting of Figure S5
+
 
 #### **validation_ACS.Rmd**
 - Transfer DMRs distinguishing between disease conditions from discovery to validation cohort
+- Plotting of Supplementary Figure S3
 
 
 ## **Data availability**
@@ -110,7 +127,7 @@ All raw **methylKit objects** (tabix format) can be downloaded from the followin
 
 
 
-**bigwig files** for the discovery cohort are available from the following links:
+All **bigwig files** for the discovery cohort are available from the following links:
 
 #### **Discovery cohort**
 - Sample_AC1: https://bimsbstatic.mdc-berlin.de/akalin/ccfDNA_ACSS_manuscript/bigwig_objects_discovery_cohort/AC1.bw
