@@ -13,6 +13,7 @@ date: "`r Sys.Date()`"
 
 ---
 
+# GOAL
 In this report, my goal is to:
 1. get disease-specific CpGs based on previously called DMRs
 2. overlap disease-specific CpGs with tissue-specific CpGs from Alex (using deconvolution)
@@ -28,8 +29,31 @@ The explanation of sample groups:
 5: Coronary artery disease, positive stress echocardiography, with percutaneous coronary intervention [CAD+posStressEcho+posIntervention]
 
 
-```{r,results='asis'}
+# Load libraries 
+```{r Load_libraries}
+library(methylKit)
+library(data.table)
+library(knitr)
+library(ggplot2)
+library(enrichR)
+library(matrixStats)
+```
 
+# Get directories
+```{r Get_directories}
+dbdir.dm='/local/AAkalin_cardiac/Results/cardiac/differential_methylation/'
+p06_methyl_calls="/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/"
+RDS.outpath="/local/AAkalin_cardiac/Results/cardiac/RDS/"
+
+
+methT.path = '/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/tileMethylCounts/methylBase_CpG_dT_tiles_win500bp_step500bp_123batch_v1.txt.bgz'
+meth.deT=methylKit:::readMethylBaseDB(methT.path,"tabix",
+                  sample_ids, "hg38" ,"CpG",
+                  "region",treatment1,TRUE,skip=0)
+```
+
+Load sample description
+```{r Load_sample_metadata, results='asis'}
 sample_ids = c(
  'N1', # control
  'N2',
@@ -98,38 +122,13 @@ TBL = data.frame(sample_ids=sample_ids,
                  treatment_descr1=treatment_descr1,
                  treatment1=treatment1,
                  stringsAsFactors = FALSE)
-library(knitr)
 kable(TBL, caption="Description of cardiac cfDNA samples")
-
-```
-
-
-
-Load libraries and get directories.
-```{r}
-library(methylKit)
-library(data.table)
-
-dbdir.dm='/local/AAkalin_cardiac/Results/cardiac/differential_methylation/'
-p06_methyl_calls="/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/"
-RDS.outpath="/local/AAkalin_cardiac/Results/cardiac/RDS/"
-
-
-methT.path = '/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/tileMethylCounts/methylBase_CpG_dT_tiles_win500bp_step500bp_123batch_v1.txt.bgz'
-meth.deT=methylKit:::readMethylBaseDB(methT.path,"tabix",
-                  sample_ids, "hg38" ,"CpG",
-                  "region",treatment1,TRUE,skip=0)
-
-
 ```
 
 
 Here, I want to get CpGs within DMRs that are the least variable between
 samples within the same group and with the highest coverage.
-
-
-```{r}
-
+```{r Get_least_variable_CpGs}
 #################
 ## heart_diseases vs control
 ################
@@ -345,7 +344,6 @@ meth.deT_red.target.DMRs=meth.deT_red.target.DMRs[-indx.na.more50perc.samples,]
 # [1] 11424    35
 
 # remove with variance = 0
-library(matrixStats)
 sds=rowSds(meth_red.target.DMRs, na.rm = TRUE)
 # # summary(sds) 
 # # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
@@ -380,8 +378,7 @@ geneList <- lapply(diffmeth.lH, function(dm) {
 })
 dev.off()
 
-library(ggplot2)
-library(enrichR)
+
 dbs <- listEnrichrDbs()
 websiteLive <- TRUE
 if (is.null(dbs)) websiteLive <- FALSE
@@ -421,10 +418,7 @@ gotPlots <- lapply(setNames(names(gresList),names(gresList)), function(tissue) {
 
 
 # Overlap of Alex's tissue-specific CpGs with disease-specific CpGs
-
-
-```{r}
-
+```{r Overlap_tissuespecific_with_diseasespecific_CpGs}
 cpg_tissuespec=fread("/data/local/agosdsc/projects/AAkalin_cfdTissue/results/extendedReference_probeRegionInfo.csv")
 # > table(cpg_tissuespec$CHR_hg38)                                                     
 #        chr1 chr10 chr11 chr12 chr13 chr14 chr15 chr16 chr17 chr18 chr19  chr2 
@@ -473,9 +467,7 @@ all.cpgs = sort(unique(c(cgs.disease.spec, cpg_tissuespec_gr)))
 
 ```
 
-```{r}
-
-
+```{r Overlap_CpGs}
 meth_unite_cpgs.allcpgs=selectByOverlap(meth_unite_cpgs, all.cpgs)
 methRawList_fil_red.target.DMRs2 = 
  	lapply(methRawList_fil, function(x){
@@ -502,7 +494,6 @@ mcols(meth_unite_cpgs.allcpgs.gr)<-NULL
 allcpgs.meth=percMethylation(meth_unite_cpgs.allcpgs)
 
 # remove with variance = 0
-library(matrixStats)
 sds=rowSds(allcpgs.meth, na.rm = TRUE)
 sds.0=which(sds==0 | is.na(sds))
 allcpgs.meth1=allcpgs.meth[-sds.0,]

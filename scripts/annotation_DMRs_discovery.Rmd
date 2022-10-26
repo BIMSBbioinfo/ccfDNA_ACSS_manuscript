@@ -12,14 +12,12 @@ output:
 date: "`r Sys.Date()`"
 ---
 
+# GOAL
 This notebook annotates DMRs for the 5 groups, adding gene info, GO, phenotype associations, DO and disgenet associations.  
 
 
-
-
-
-
-```{r}
+# Load Libraries
+```{r Load_libraries}
 #Loading libraries and DMRs
 require(rGREAT)
 library("annotatr")
@@ -37,9 +35,15 @@ library(stringi)
 library("enrichplot")
 #library(dplyr)
 library(gridExtra)
+#library(rtracklayer)
+#library(AnnotationHub)
+#library(Rsamtools)
+library(readxl)
+library(readr)
+```
 
-
-
+# Load Data
+```{r Load_Data}
 #OPEN DMR FILES
 
 myDiff25p_tiled_list_v1 <- readRDS("/local/AAkalin_cardiac/Results/cardiac/RDS/myDiff25p_tiled_list_v1.RDS")
@@ -56,9 +60,8 @@ DMR <- lapply(myDiff25p_tiled_list_v1, function(i){
 })
 ```
 
-
+# Assign genes to DMRs with GREAT
 Annotate with rGREAT
-
 ```{r, echo = FALSE}
 geneList <- lapply(myDiff25p_tiled_list_v1, function(dm) {
                                              job = submitGreatJob(
@@ -87,12 +90,7 @@ geneList_df <- lapply(geneList, function(i){
 })
 ```
 
-
-
-
-
-## reproducing Kasia results with old version of GREAT that included dropped ontologies (for example MSigDB)
-
+Reproducing results with old version of GREAT that included dropped ontologies (for example MSigDB)
 ```{r}
 liftOver.hg38_to_hg19 = function(mycur){
   require(rtracklayer)
@@ -107,15 +105,11 @@ liftOver.hg38_to_hg19 = function(mycur){
 }
 ```
 
-
-
-
 ```{r}
 myDiff25p_tiled.hg19 = lapply(myDiff25p_tiled_list_v1, function(dm){
   liftOver.hg38_to_hg19(as(dm, "GRanges"))
 })
 ```
-
 
 ```{r}
  great.output.list = lapply(myDiff25p_tiled.hg19, function(dm){
@@ -150,22 +144,13 @@ myDiff25p_tiled.hg19 = lapply(myDiff25p_tiled_list_v1, function(dm){
 
 ```{r}
 saveRDS(great.output.list,"/local/rcuadrat/cfdna_wgbs/tmp_dfs/GREAT_v3.RDS")
-
-```
-
-
-```{r}
 saveRDS(geneList_df,"/local/rcuadrat/cfdna_wgbs/tmp_dfs/geneList_df.RDS")
 saveRDS(geneList,"/local/rcuadrat/cfdna_wgbs/tmp_dfs/geneList.RDS")
 ```
 
-
 Annoate with annotatR
 The hg38_cpgs shortcut annotates regions to CpG islands, CpG shores, CpG shelves, and inter-CGI. 
 The hg38_basicgenes shortcut annotates regions to 1-5Kb, promoters, 5’UTRs, exons, introns, and 3’UTRs.
-
-
-
 ```{r}
 code = c('lncrna' = 'AH49559')
 build_ah_annots(genome = 'hg38', ah_codes = code, annotation_class = 'custom')
@@ -188,38 +173,17 @@ dm_annotated2 <- lapply(myDiff25p_tiled_list_v1, function(dm) {
     quiet = FALSE)
   return(a)
 })
-
 ```
-
-
 
 ```{r}
 saveRDS(dm_annotated2, "/local/rcuadrat/cfdna_wgbs/tmp_dfs/annotR.RDS")
 ```
 
-
-```{r}
-
-#library(rtracklayer)
-#library(AnnotationHub)
-#library(Rsamtools)
-
-```
-
-
-
-Enhancers annotatiom from roadmap
-
+Enhancers annotation from roadmap
 ```{r}
 files <- list.files(path="~/roadmap", pattern="*.bed", full.names=TRUE, recursive=FALSE)
-```
-
-
-```{r}
 files
 ```
-
-
 
 ```{r}
 #merge all BED files (they are on ~/roadmap)
@@ -238,19 +202,12 @@ bedfile <- lapply(files,function(x) {
 })
 
 all_bed<-do.call("c",bedfile)
-
-```
-
-```{r}
 all_bed
 ```
 
-
 ```{r}
 write.table(as(all_bed,"data.frame"),file="~/enh_promot_roadmap.csv",sep="\t",row.names =FALSE)
-
 ```
-
 
 ```{r}
 #merge all BED files (they are on ~/roadmap)
@@ -269,17 +226,11 @@ bedfile_enh <- lapply(files,function(x) {
 })
 
 all_bed_enh<-do.call("c",bedfile_enh)
-
-```
-
-```{r}
 #as(all_bed_enh,"data.frame")
 ```
 
-
 ```{r}
 write.table(as(all_bed_enh,"data.frame"),file="~/enh_roadmap.csv",sep="\t",row.names =FALSE)
-
 ```
 
 ```{r}
@@ -294,20 +245,15 @@ bedfile_tss <- lapply(files,function(x) {
 })
 
 all_bed_promoters<-do.call("c",bedfile_tss)
-```
-
-
-```{r}
 as(all_bed_promoters,"data.frame")
 ```
+
 ```{r}
 write.table(as(all_bed_promoters,"data.frame"),file="~/promoters_roadmap.csv",sep="\t",row.names =FALSE)
 ```
 
-
 ```{r}
 #overlap DMRs with the BED files from roadmap
-
 final_enhancer <- lapply(myDiff25p_tiled_list_v1, function(x) {
   tmp_bed2 <- findOverlaps(x, all_bed)
   tmp_bed2 <-data.frame(tmp_bed2)
@@ -316,10 +262,8 @@ final_enhancer <- lapply(myDiff25p_tiled_list_v1, function(x) {
   tmp_bed4 <- tmp_bed4 %>% dplyr::select(name,sample)
   final_enhancer_annotated<-merge(tmp_bed3,tmp_bed4,by=0)
   final_enhancer_annotated <-final_enhancer_annotated %>% group_by(seqnames,start,end,strand) %>% summarise_all(~paste(unique(stri_remove_empty(na.omit(.))), collapse = ','))
-  
 }
 )
-
 ```
 
 ```{r}
@@ -332,17 +276,14 @@ dm_annotated3 <- lapply(names(dm_annotated2), function(i) {
 }
 )
 names(dm_annotated3) <- names(dm_annotated2)
-
 ```
 
 ```{r}
 saveRDS(dm_annotated3, "/local/rcuadrat/cfdna_wgbs/tmp_dfs/annotR_dm3.RDS")
 ```
 
-
-
 ```{r}
-#using biomart to get gene ids from entrez (necessary for disginet)
+#using biomart to get gene ids from entrez (necessary for disgenet)
 
 ensembl=useMart("ensembl")
 ensembl = useDataset("hsapiens_gene_ensembl",mart=ensembl)
@@ -365,8 +306,6 @@ gene_ids_mart <- lapply(geneList_df, function(i){
 #adding entrez id on GREAT tables
 geneList_entrez <- mapply(merge, x=geneList_df,y=gene_ids_mart, 
                           by.x="gene",by.y="hgnc_symbol",all.x = TRUE ,SIMPLIFY=FALSE) 
-
-
 ```
 
 ```{r}
@@ -374,8 +313,7 @@ saveRDS(geneList_entrez,"/local/rcuadrat/cfdna_wgbs/tmp_dfs/geneList_entrez.RDS"
 
 ```
 
-
-Disgenet enrichment and plots
+# Disgenet enrichment and plots
 ```{r}
 enrichment_all <- lapply(geneList_entrez, function(i){
   enr<-enrichDGN(
@@ -392,19 +330,15 @@ enrichment_all <- lapply(geneList_entrez, function(i){
   return(enr)
   
 })
-  
 ```
-
 
 ```{r}
 saveRDS(enrichment_all,"/local/rcuadrat/cfdna_wgbs/tmp_dfs/enrichment_all.RDS")
-
 ```
-
 
 ```{r}
 # Get DMC specific to the disease   
-#removing CAD group with both pos and neg myDiff25p_tiled_list_v1[-4], keeping just the splited verion
+#removing CAD group with both pos and neg myDiff25p_tiled_list_v1[-4], keeping just the splitted version
 
 myDiff25p_specdisease = lapply(1:length(myDiff25p_tiled_list_v1[-4]), 
 							   function(i){
@@ -415,9 +349,7 @@ myDiff25p_specdisease = lapply(1:length(myDiff25p_tiled_list_v1[-4]),
 })
 
 names(myDiff25p_specdisease)<-names(myDiff25p_tiled_list_v1[-4])
-
 ```
-
 
 ```{r}
 # Get DMC specific to the disease ONLY considering ACS
@@ -433,23 +365,14 @@ myDiff25p_specdisease_ACS = lapply(1:length(myDiff25p_tiled_list_v1[-4:-6]),
 names(myDiff25p_specdisease_ACS)<-names(myDiff25p_tiled_list_v1[-4:-6])
 ```
 
-
-
 Merging DMR stats and GREAT annotations
-
-
 ```{r}
 #Merging DMR stats and GREAT annotations
 DMR_great <- mapply(left_join, DMR, geneList_df,
                     by.x=c("seqnames","start","end", "width", "strand"),by.y=c("seqnames","start","end", "width", "strand") ,SIMPLIFY=FALSE)
-
-
 ```
 
-
-
 Get EFO associated genes from https://alpha.targetvalidation.org/
-
 ```{r}
 EFO_CHD<-read.table("/home/rcastro/EFO_0001645-associated-diseases.tsv",sep="\t",header = TRUE)
 EFO_CHD <-EFO_CHD %>% rename("gene"="symbol")
@@ -464,19 +387,12 @@ DMR_great_EFO <- lapply(DMR_great, function(dm) {
   return(df)
   
   })
-  
 ```
-
-
-
 
 Annotating with disgenet
 Taking gene symbols 
 Taking the diseases associated to each gene
-
-
 ```{r}
-
 #diginet now needs API key that should be obtained with get_disgenet_api_key fuction after creating user and pwd
 
 disgenet <- lapply(DMR_great, function(i){
@@ -495,30 +411,23 @@ disgenet_df <- lapply(disgenet, function(i){
   return(data.frame(i))
 })
 
-#merging DMR table + disginet
+#merging DMR table + disgenet
 DMR_great_disgenet <- mapply(merge, DMR_great_EFO, disgenet_df,
                       by.x=c("gene"),by.y=c("gene_symbol"), all.x=TRUE, SIMPLIFY=FALSE)
 ```
 
 ```{r}
 saveRDS(DMR_great_disgenet,"/local/rcuadrat/cfdna_wgbs/tmp_dfs/DMR_great_disgenet.RDS")
-
 ```
 
 ```{r}
 
-#Skiping authentication and loading old result
+#Skipping authentication and loading old result
 DMR_great_disgenet<-readRDS("~/tmp_dfs/DMR_great_disgenet.RDS")
-
-
 ```
 
-
-
-Get EFO vocabulary from disginet
-
+Get EFO vocabulary from disgenet
 ```{r}
-
 mapping_disgenet_EFO<-read.table(gzfile("/home/rcastro/disease_mappings.tsv.gz"),sep="\t", header = TRUE, quote = "\"")
 mapping_disgenet_EFO <-mapping_disgenet_EFO %>% dplyr::filter(vocabulary == "EFO")
 mapping_disgenet_EFO <-mapping_disgenet_EFO %>% rename("diseaseid" = "diseaseId")
@@ -529,14 +438,12 @@ mapping_disgenet_EFO_2 <- lapply(DMR_great_disgenet, function(dm) {
             by="diseaseid", all.x=TRUE ,SIMPLIFY=FALSE)
   return(df)
 })
-
 ```
 
-Creating a column Y/N if finding terms related to heart diseases on disgenet gene->diseases associations (looking in disease name and disease class)
+Creating a column Y/N if finding terms related to heart diseases on disgenet gene -> diseases associations (looking in disease name and disease class)
 Summarizing a column with disease names and class (with heart related terms) (comma sepated terms)
 Summarizing all the other columns (comma separated) (to make one row for one DMR)
 Creating column with max values for scores of gene->associations (MAX_*). Those columns are only considering the scores from gene-diseases associations from heart related diseases.
-
 ```{r}
 patent_genes <-c("AF161365", "HNRPF", "ACBD5", "TFCP2", "DDX18", "AF289562", "CD248", "CD79B", "CD19", "SPIB",
                  "BLK", "CD3D", "LCK", "TMC8", "CCT2", "S100A12", "MMP9", "CLEC4E", "ALOX5AP", "S100A8", "NAMPT", "RPL28",
@@ -544,20 +451,16 @@ patent_genes <-c("AF161365", "HNRPF", "ACBD5", "TFCP2", "DDX18", "AF289562", "CD
                  "BCL2A1", "TNFRSF10C", "PTAFR", "KCNE3", "LAMP2", "TLR4", "TYROBP", "SLAMF7", "CX3CR1", "KLRC4","CD8A")
 ```
 
-
 ```{r}
-library(readxl)
 circulation_MI <- read_excel("~/circulation_MI.xlsx")
 circulation_CHD <- read_excel("~/circulation_CHD.xlsx")
 
 
 circulation_genes_MI <-c(circulation_MI$Gene)
 circulation_genes_CHD <-c(circulation_CHD$`Gene‡`)
-
 ```
 
 ```{r}
-library(readr)
 cluster8 <- read_table2("~/cluster8.csv", 
                         locale = locale(decimal_mark = ","))
 
@@ -573,14 +476,9 @@ cluster10 <- read_table2("~/cluster10.csv",
 cluster8 <- cluster8$gene
 cluster9 <- cluster9$gene
 cluster10 <- cluster10$gene
-
 ```
 
-
-
-
 ```{r}
-
 terms_for_regex="heart|coronary|atherosclerosis|inflammation|cardio|vascular|artery|infarction|myocard|cardiac|artery calcification|arterial stiffness"
 
 
@@ -668,8 +566,6 @@ final_DMR_df <- mapply(left_join, x=final_DMR_df,y=only_heart_col,
 ```
 
 Calculating within group variation (SD)
-
-
 ```{r}
 sample_ids = c('N1','N2','N3','N4','N5','N6','H26','H28',
   'AC1','AC2','AC3','AC4','AC5','AC6','AC14','AC15',
@@ -700,7 +596,6 @@ treatment_descr=c(
 
 ```
 
-
 ```{r}
 #open methylDB with all tiles methylation
 
@@ -727,8 +622,6 @@ names(list_of_groups) <- c("Control","ACS_Stemi","ACS_Nstemi","ACS_iAP","CAD+pos
 
 ```
 
-
-
 ```{r}
 #geting coordinates from methylation sites (percMethylation returned methylation % without coordinates)
 coord <- read.table(gzfile('/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/tileMethylCounts/methylBase_CpG_dT_tiles_win500bp_step500bp_123batch_v1.txt.bgz'),
@@ -738,10 +631,7 @@ names(coord)<-c("seqnames","start","end", "strand")
 #perc_meth<-merge(coord,perc,by=0)
 ```
 
-
-
 ```{r}
-
 #calculating SD for perc methylation for all samples and for control
 SDs <- lapply(list_of_groups, function(i){
   return(transform(perc, SD=apply(perc %>% dplyr::select(i),1, sd, na.rm = TRUE)) %>% dplyr::select(SD))
@@ -755,22 +645,15 @@ SD_control<-merge(coord,SDs[1],by=0) %>% dplyr::select(-Row.names)
 SD_control <- SD_control %>% rename("SD_control"="SD")
 ```
 
-
 ```{r}
-#save SDs
-
 saveRDS(SD_control,"/local/rcuadrat/cfdna_wgbs/tmp_dfs/SDs_control.RDS")
 saveRDS(SD_df,"/local/rcuadrat/cfdna_wgbs/tmp_dfs/SDs_per_group.RDS")
 ```
 
-
 ```{r}
 #SD_control<-readRDS("~/tmp_dfs/SDs_control.RDS")
 #SD_df<-readRDS("~/tmp_dfs/SDs_per_group.RDS")
-
-
 ```
-
 
 ```{r}
 #merging SDs with DMRs annotated
@@ -782,10 +665,7 @@ final_DMR_df_SDs <- lapply(final_DMR_df_SDs,  function(i){
   df <- merge(i,SD_control,by.x=c("seqnames","start","end", "strand"),by.y=c("seqnames","start","end", "strand"),all.x = TRUE ,SIMPLIFY=FALSE)
   return(df)
 })
-
 ```
-
-
 
 ```{r}
 #adding info if the DMRs are disease exclusive
@@ -799,8 +679,6 @@ exc_df <- lapply(myDiff25p_specdisease, function(i){
 ### merging disease exclusive col and REMOVING CAD group with both pos and neg
 final_DMR_df_SDs <- mapply(left_join, x=final_DMR_df_SDs[-4],y=exc_df, 
                        by.x=c("seqnames","start","end", "width", "strand"),by.y=c("seqnames","start","end", "width", "strand") ,SIMPLIFY=FALSE)
-
-
 ```
 
 
@@ -820,16 +698,7 @@ final_DMR_df_SDs_sorted <- lapply(final_DMR_df_SDs, function(i){
                                              "heart_disease_class_name_disgenet"="heart_disease_class_name",
                                              "max_score_disgenet"="max_score","EFO0001645_score_open_target"="EFO0001645_score"))
 })
-
-
-
 ```
-
-
-
-
-
-
 
 Generate the sets for upset plot for all DMRs and col with info on witch groups the DMR is present
 ```{r}
@@ -873,20 +742,13 @@ final_DMR_df_SDs_sorted <- lapply(final_DMR_df_SDs_sorted, function(i){
   
   return(arrange(i,desc(abs(meth.diff)),qvalue,SD,desc(heart_disease_related_disgenet),desc(max_score_disgenet),desc(max_ei),desc(max_dsi)))
 })
-
-
 ```
-
-
 
 ```{r}
 saveRDS(final_DMR_df_SDs_sorted,"/local/rcuadrat/cfdna_wgbs/tmp_dfs/annotated_ranked_DMRs.RDS")
 ```
 
-
-
 Here we join info from the CpG atlas for tissue specific CpGs
-
 ```{r}
 #matrix with altas reference
 extendedReference <- read_csv("/local/agosdsc/projects/AAkalin_cfdTissue/results/extendedReference.csv")
@@ -896,12 +758,9 @@ cpg_tissuespec=data.table::fread("/local/agosdsc/projects/AAkalin_cfdTissue/resu
 cpg_tissuespec=cpg_tissuespec[-which(cpg_tissuespec$CHR_hg38==""),]
 #renaming the cols
 cpg_tissuespec<-cpg_tissuespec %>% dplyr::select(CpG,CHR_hg38,Start_hg38,End_hg38,Strand_hg38) %>% rename("chr"="CHR_hg38","start"="Start_hg38","end"="End_hg38","strand"="Strand_hg38")
-
 ```
 
-
 ```{r}
-
 #getting the extreme values (biggest distance from the avg) and the tissue/cell that has this extreme values (cell/tissue specific cpgs)
 extendedReference <-extendedReference %>% remove_rownames %>% column_to_rownames(var="CpGs")
 extendedReference$avg <- rowMeans(extendedReference)
@@ -960,18 +819,12 @@ names(final_cpgs_specifics) <-list_treat
 
 ```
 
-
 ```{r}
-
-
 #adding CpG tissue specific annotation to the sorted-annotated DMRs
 
 final_DMR_df_SDs_sorted <- mapply(left_join, x=final_DMR_df_SDs_sorted,y=final_cpgs_specifics, 
                        by.x=c("seqnames","start","end", "width", "strand"),by.y=c("seqnames","start","end", "width", "strand") ,SIMPLIFY=FALSE)
-
-
 ```
-
 
 ```{r}
 final_enhancer_annotations <- lapply(final_enhancer[-4], function(i){
@@ -983,7 +836,6 @@ final_enhancer_annotations <- lapply(final_enhancer[-4], function(i){
 })
 ```
 
-
 ```{r}
 final_regulatory_annotations <- lapply(dm_annotated2[-4], function(i){
   tmp<-as.data.frame(i)
@@ -992,7 +844,6 @@ final_regulatory_annotations <- lapply(dm_annotated2[-4], function(i){
   return(tmp)
 })
 ```
-
 
 ```{r}
 final_DMR_df_SDs_sorted_annotated <- lapply(names(final_DMR_df_SDs_sorted), function(i){
@@ -1003,14 +854,9 @@ final_DMR_df_SDs_sorted_annotated <- lapply(names(final_DMR_df_SDs_sorted), func
 names(final_DMR_df_SDs_sorted_annotated)<-names(final_DMR_df_SDs_sorted)
 ```
 
-
-
 ```{r}
 saveRDS(final_DMR_df_SDs_sorted_annotated,"/local/rcuadrat/cfdna_wgbs/tmp_dfs/annotated_DMRs.RDS")
 ```
-
-
-
 
 ```{r}
 sessionInfo()

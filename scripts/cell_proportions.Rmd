@@ -3,20 +3,61 @@ title: "R Notebook"
 output: html_notebook
 ---
 
+# GOAL
+The goal of this script is to predict the cell/tissue-type proportions via NNLS modelling where ccfDNA originates from.
 
-
-```{r}
+# Load Libraries
+```{r Load_libraries}
 library(tidyverse)
+library(deconvR)
 ```
 
-```{r}
+# Read in Data
+```{r Read_in_data}
 probes = readRDS("~/illumina_probes_hg38_GRanges.RDS")
 refExtended = read.csv("/local/agosdsc/projects/AAkalin_cfdTissue/results/extendedReference.csv")
-
+suppl_tbl_2<-readRDS("/local/rcuadrat/cfdna_wgbs/suppl_tbl_2.RDS")
 
 ```
 
-```{r}
+# Set theme
+```{r Set_Theme_for_Plots}
+theme_Publication <- function(base_size=14, base_family="sans") {
+      library(grid)
+      library(ggthemes)
+      (theme_foundation(base_size=base_size, base_family=base_family)
+       + theme(plot.title = element_text(face = "bold",
+                                         size = rel(1.2), hjust = 0.5, margin = margin(0,0,20,0)),
+               text = element_text(),
+               panel.background = element_rect(colour = NA),
+               plot.background = element_rect(colour = NA),
+               panel.border = element_rect(colour = NA),
+               axis.title = element_text(face = "bold",size = rel(1)),
+               axis.title.y = element_text(angle=90,vjust =2),
+               axis.title.x = element_text(vjust = -0.2),
+               axis.text = element_text(), 
+               axis.line.x = element_line(colour="black"),
+               axis.line.y = element_line(colour="black"),
+               axis.ticks = element_line(),
+               panel.grid.major = element_line(colour="#f0f0f0"),
+               panel.grid.minor = element_blank(),
+               legend.key = element_rect(colour = NA),
+               legend.position = "bottom",
+               legend.direction = "horizontal",
+               legend.box = "vetical",
+               legend.key.size= unit(0.5, "cm"),
+               #legend.margin = unit(0, "cm"),
+               legend.title = element_text(face="italic"),
+               plot.margin=unit(c(10,5,5,5),"mm"),
+               strip.background=element_rect(colour="#f0f0f0",fill="#f0f0f0"),
+               strip.text = element_text(face="bold")
+       ))
+      
+}
+```
+
+Make metadata table
+```{r Make_metadata_table}
 sample_ids = c(
  'N1', # control
  'N2',
@@ -77,26 +118,24 @@ methT.path = '/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/til
 meth.deT=methylKit:::readMethylBaseDB(methT.path,"tabix",
                                       sample_ids, "hg38" ,"CpG",
                                       "region",treatment =  treatment1,TRUE,skip=0)
-```
 
-
-```{r}
 desc<-data.frame(treatment1,treatment_descr,sample_ids)
 desc<-desc %>% rename("treatment"="treatment1")
 desc<-unique(desc)
 desc$treatment_descr <- gsub("iAP","UA",desc$treatment_descr)
 ```
 
-
-
-
-```{r}
+Mapping whole-genome bisulfite sequencing data to their probe IDs
+```{r Map_data_to_ids}
 meth.deT@treatment=treatment1
 mapping = deconvR::BSmeth2Probe(probe_id_locations = probes, WGBS_data = meth.deT)
 
 ```
 
-```{r}
+# Cell type proportion prediction
+
+Prediction of cell-type proportions of bulk methylation profiles, as well as partial R-squared values for each sample using non-negative least square regression.
+```{r Cell_type_prediction}
 decon_nnls_extended = deconvR::deconvolute(reference=refExtended, bulk=mapping, model="nnls")
 
 decon_nnls_extended_0 = decon_nnls_extended[1:8,]    
@@ -112,16 +151,12 @@ decon_nnls_extended_2.m = reshape2::melt(decon_nnls_extended_2)
 decon_nnls_extended_3.m = reshape2::melt(decon_nnls_extended_3)
 decon_nnls_extended_4.m = reshape2::melt(decon_nnls_extended_4)
 decon_nnls_extended_5.m = reshape2::melt(decon_nnls_extended_5)
-
+decon_nnls_extended.m
 
 ```
 
-```{r}
-#decon_nnls_extended.m
-```
-
-
-```{r}
+Remove CAD samples and rename conditions
+```{r Remove_CAD_samples_and_rename}
 decon_nnls_extended_tgs.m = cbind(decon_nnls_extended.m,"treatment"= methylKit::getTreatment(meth.deT),"samples_id"= methylKit::getSampleID(meth.deT))
 
 decon_nnls_extended_tgs.m <-decon_nnls_extended_tgs.m %>% filter(treatment != 4 & treatment != 5)
@@ -134,74 +169,29 @@ decon_nnls_extended_tgs.m$treatment_descr <-str_replace(decon_nnls_extended_tgs.
 decon_nnls_extended_tgs.m$treatment_descr <-str_replace(decon_nnls_extended_tgs.m$treatment_descr,"3","UA")
 decon_nnls_extended_tgs.m$treatment_descr <- factor(decon_nnls_extended_tgs.m$treatment_descr , levels=c("Stemi", "Nstemi", "UA","Healthy"))
 
-```
-
-
-
-
-```{r}
 saveRDS(decon_nnls_extended_tgs.m,"../Results/cardiac/RDS/decon_cell_proportions.RDS")
 ```
 
-```{r}
-decon_nnls_extended_tgs.m_normalized<-decon_nnls_extended_tgs.m
-
-```
-
-
-
-
-```{r}
-#does not work, got from descriptive_stats
-# suppl_tbl_2<-readRDS("/home/rcastro/suppl_tbl_2.RDS")
-
-```
-
-```{r}
-tbl_2<-suppl_tbl_2 %>% dplyr::select(Sample,cfDNA_ug_per_ml_plasma) %>% rename(
-      samples_id = Sample )
-```
-
-
-```{r}
-decon_nnls_extended_tgs.m_normalized<-left_join(decon_nnls_extended_tgs.m_normalized,tbl_2,by="samples_id")
-```
-
-
-```{r}
+Merge metadata with cell type proportion results
+```{r Merge_metadata_with_results}
+tbl_2 <- suppl_tbl_2 %>%
+  dplyr::select(Sample, cfDNA_ug_per_ml_plasma) %>%
+  rename(
+    samples_id = Sample
+  )
+decon_nnls_extended_tgs.m_normalized <- decon_nnls_extended_tgs.m
+decon_nnls_extended_tgs.m_normalized <- left_join(decon_nnls_extended_tgs.m_normalized, tbl_2, by = "samples_id")
 decon_nnls_extended_tgs.m_normalized
 ```
 
-
-
-```{r,fig.height=16,fig.width=10}
-bp_decon_nnls_extended <- ggplot2::ggplot(decon_nnls_extended_tgs.m, ggplot2::aes(x=reorder(variable,value), y=value, fill=factor(treatment_descr))) + ggplot2::geom_boxplot()
-
-bp_decon_nnls_extended + ggplot2::theme(legend.text=element_text(size=14),axis.text.x = ggplot2::element_text(size=14),axis.text.y = ggplot2::element_text(size=14), plot.title = ggplot2::element_text(size=14)) + ggplot2::labs(fill="Treatment",x = "Cell Type", y = "Proportion of Sample") + coord_flip()
-
-
+Plot results
+```{r Plot_Results,fig.height=16,fig.width=10}
+# bp_decon_nnls_extended <- ggplot2::ggplot(decon_nnls_extended_tgs.m, ggplot2::aes(x=reorder(variable,value), y=value, fill=factor(treatment_descr))) + ggplot2::geom_boxplot()
+# 
+# bp_decon_nnls_extended + ggplot2::theme(legend.text=element_text(size=14),axis.text.x = ggplot2::element_text(size=14),axis.text.y = ggplot2::element_text(size=14), plot.title = ggplot2::element_text(size=14)) + ggplot2::labs(fill="Treatment",x = "Cell Type", y = "Proportion of Sample") + coord_flip()
 ```
 
-
-
-```{r}
-decon_nnls_extended_tgs.m_short <-decon_nnls_extended_tgs.m %>% filter(variable != "Adipocytes" & 
-                                         variable != "Lung_cells" & 
-                                         variable != "Pancreatic_beta_cells" & 
-                                         variable != "Pancreatic_acinar_cells"	 &
-                                         variable != "Pancreatic_duct_cells" &
-                                         variable != "Colon_epithelial_cells" &
-                                         variable != "Head_and_neck_larynx" &
-                                         variable != "Prostate" &
-                                         variable != "Upper_GI" &
-                                         variable != "Left_atrium" &
-                                         variable != "right_atrium_auricular_region" &
-                                         variable != "Breast" &
-                                         variable != "Uterus_cervix"
-                                         )
-```
-
-
+Exclude non-haematological cell types and normalised data by amount of ccfDNA
 ```{r}
 decon_nnls_extended_tgs.m_normalized <-decon_nnls_extended_tgs.m_normalized %>% filter(variable != "Adipocytes" & 
                                          variable != "Lung_cells" & 
@@ -217,87 +207,123 @@ decon_nnls_extended_tgs.m_normalized <-decon_nnls_extended_tgs.m_normalized %>% 
                                          variable != "Breast" &
                                          variable != "Uterus_cervix"
                                          )
-```
 
-
-```{r}
-decon_nnls_extended_tgs.m_short$value = decon_nnls_extended_tgs.m_short$value * 100
-
-```
-
-
-
-
-```{r}
 decon_nnls_extended_tgs.m_normalized$value = decon_nnls_extended_tgs.m_normalized$value * decon_nnls_extended_tgs.m_normalized$cfDNA_ug_per_ml_plasma
 decon_nnls_extended_tgs.m_normalized$method <- "ccfDNA (μg/ml of plasma)"
 ```
 
+Exclude non-haematological cell types
+```{r Exclude_celltypes}
+decon_nnls_extended_tgs.m_short <-decon_nnls_extended_tgs.m %>% filter(variable != "Adipocytes" & 
+                                         variable != "Lung_cells" & 
+                                         variable != "Pancreatic_beta_cells" & 
+                                         variable != "Pancreatic_acinar_cells"	 &
+                                         variable != "Pancreatic_duct_cells" &
+                                         variable != "Colon_epithelial_cells" &
+                                         variable != "Head_and_neck_larynx" &
+                                         variable != "Prostate" &
+                                         variable != "Upper_GI" &
+                                         variable != "Left_atrium" &
+                                         variable != "right_atrium_auricular_region" &
+                                         variable != "Breast" &
+                                         variable != "Uterus_cervix"
+                                         )
 
-
-
-```{r}
+decon_nnls_extended_tgs.m_short$value = decon_nnls_extended_tgs.m_short$value * 100
 decon_nnls_extended_tgs.m_short$method <- "% of cell/tissue"
-```
 
-
-```{r}
 decon_nnls_extended_all_short<-rbind(decon_nnls_extended_tgs.m_short,decon_nnls_extended_tgs.m_normalized %>% dplyr::select(-cfDNA_ug_per_ml_plasma))
-```
-
-```{r}
 decon_nnls_extended_all_short$treatment_descr <- factor(decon_nnls_extended_all_short$treatment_descr , levels=c("Stemi", "Nstemi", "UA","Healthy"))
 
-```
-
-```{r}
+#specify cell types more specifically
 decon_nnls_extended_all_short_even_shorter <-decon_nnls_extended_all_short %>% filter(variable =="Vascular_endothelial_cells" | variable =="heart_left_ventricle" | variable =="Erythrocyte_progenitors" | variable =="coronary_artery" | variable =="Monocytes_EPIC"  | variable == "CD4T.cells_EPIC" | variable == "NK.cells_EPIC" | variable =="Kidney" | variable == "Neutrophils_EPIC" | variable =="Hepatocytes")
-
-   
- 
-```
-
-
-```{r}
 decon_nnls_extended_all_short_even_shorter$variable <-str_replace(decon_nnls_extended_all_short_even_shorter$variable,"_EPIC","")
 decon_nnls_extended_all_short_even_shorter$variable <-str_replace(decon_nnls_extended_all_short_even_shorter$variable,"_"," ")
 decon_nnls_extended_all_short_even_shorter$variable <-str_replace(decon_nnls_extended_all_short_even_shorter$variable,".cells","")
-
-
-
-```
-
-```{r}
 decon_nnls_extended_all_short_even_shorter$variable <-str_replace(decon_nnls_extended_all_short_even_shorter$variable,"_"," ")
-
-```
-
-```{r}
 decon_nnls_extended_all_short_even_shorter
-```
 
+saveRDS(decon_nnls_extended_all_short,"decon_nnls_extended_all_short.RDS")
+```
 
 ```{r}
-
-bp_decon_nnls_extended <- ggplot2::ggplot(decon_nnls_extended_all_short_even_shorter %>% filter(method == "% of cell/tissue"), ggplot2::aes(x=variable, y=value, fill=factor(treatment_descr))) + ggplot2::geom_boxplot()
-
-bp_decon_nnls_extended +   theme_Publication() + scale_fill_Publication() + ggplot2::theme(axis.text.x = element_blank(),strip.text = element_text(size=12),legend.text=element_text(size=14),axis.title.x = element_blank()) + ggplot2::labs(fill="Group",x = "treatment_descr", y = "% of cell/tissue") + ggplot2::facet_wrap(~variable, scale="free",ncol = 4) 
-
-ggplot2::ggsave(filename = "/local/AAkalin_cardiac/Results/cardiac/Plots/Figure2.pdf", 
-plot =  last_plot(), 
-width = 12,
-height = 12)
-
-
+decon_nnls_extended_all_short_even_shorter %>%
+  mutate(
+    variable = str_to_title(variable),
+    treatment_descr = fct_recode(treatment_descr,
+      "STEMI" = "Stemi",
+      "NSTEMI" = "Nstemi"
+    )
+  )
 ```
 
-```{r,fig.height=18,fig.width=12}
+# Plotting
+
+```{r Publication Figure}
+Figure_2 <-
+  decon_nnls_extended_all_short_even_shorter %>%
+  mutate(
+    variable = case_when(
+      variable == "coronary artery" ~ "Coronary artery",
+      variable == "heart left ventricle" ~ "Heart left ventricle",
+      variable == "CD4T" ~ "CD4+ T cells",
+      variable == "NK" ~ "NK cells",
+      variable == "Vascular endothelial" ~ "Vascular endothelial cells",
+      TRUE ~ variable
+    ),
+    treatment_descr = fct_recode(treatment_descr,
+      "STEMI" = "Stemi",
+      "NSTEMI" = "Nstemi"
+    )
+  ) %>%
+  filter(method == "% of cell/tissue") %>%
+  ggplot(ggplot2::aes(x = variable, y = value, fill = factor(treatment_descr))) +
+  geom_boxplot() +
+  theme_Publication() +
+  scale_fill_Publication() +
+  theme(
+    axis.text.x = element_blank(),
+    strip.text = element_text(size = 12),
+    legend.text = element_text(size = 14),
+    axis.title.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_blank()
+  ) +
+  labs(fill = "Group", x = "treatment_descr", y = "Predicted origin of ccfDNA [%]") +
+  facet_wrap(~variable, scale = "free", ncol = 5, labeller = label_wrap_gen(width = 15), strip.position = "top")
+
+ggsave(
+  bg = "white",
+  "/local/AAkalin_cardiac/Results/cardiac/Plots/Figure2.pdf",
+  device = "pdf",
+  plot = Figure_2, 
+  width = 210, 
+  units = "mm", 
+  height = 180
+)
+Figure_2
+```
+
+
+
+```{r Plot_haematological_cell_types_shorter_without_y_label, fig.height=18,fig.width=12}
 #pdf(file = "/local/AAkalin_cardiac/Results/cardiac/Plots/Figure2.pdf",height = 18,width = 12)
 
 
-bp_decon_nnls_extended <- ggplot2::ggplot(decon_nnls_extended_all_short_even_shorter, ggplot2::aes(x=variable, y=value, fill=factor(treatment_descr))) + ggplot2::geom_boxplot()
+bp_decon_nnls_extended <- ggplot(decon_nnls_extended_all_short_even_shorter, aes(x=variable, y=value, fill=factor(treatment_descr))) + 
+  geom_boxplot()
 
-bp_decon_nnls_extended +   theme_Publication() + scale_fill_Publication() + ggplot2::theme(axis.text.x = element_blank(),strip.text = element_text(size=12),legend.text=element_text(size=14),axis.title.x = element_blank()) + ggplot2::labs(fill="Group",x = "treatment_descr", y = "") + ggplot2::facet_wrap(~variable + method, scale="free",ncol = 4) 
+bp_decon_nnls_extended +   
+  theme_Publication() + 
+  scale_fill_Publication() + 
+  theme(axis.text.x = element_blank(),
+        strip.text = element_text(size=12),
+        legend.text=element_text(size=14),
+        axis.title.x = element_blank()) + 
+  labs(fill="Group",x = "treatment_descr", y = "") + 
+  facet_wrap(~variable + method, scale="free",ncol = 4) 
 
 ggplot2::ggsave(filename = "/local/AAkalin_cardiac/Results/cardiac/Plots/Figure2.pdf", 
 plot =  last_plot(), 
@@ -307,25 +333,11 @@ height = 18)
 #dev.off()
 ```
 
-
-```{r}
-saveRDS(decon_nnls_extended_all_short,"decon_nnls_extended_all_short.RDS")
-```
-
-
-```{r,fig.height=16,fig.width=12}
-
-
-bp_decon_nnls_extended <- ggplot2::ggplot(decon_nnls_extended_all_short, ggplot2::aes(x=reorder(variable,value), y=value, fill=factor(treatment_descr))) + ggplot2::geom_boxplot()
+```{r Plot_haematological_cell_types_reordered,fig.height=16,fig.width=12}
+bp_decon_nnls_extended <- ggplot2::ggplot(decon_nnls_extended_all_short, ggplot2::aes(x=reorder(variable, value), y=value, fill=factor(treatment_descr))) + ggplot2::geom_boxplot()
 
 bp_decon_nnls_extended + ggplot2::theme(legend.text=element_text(size=14),axis.text.x = ggplot2::element_text(size=14), axis.text.y = ggplot2::element_text(size=14),plot.title = ggplot2::element_text(size=16)) + ggplot2::labs(fill="Treatment",x = "", y = "") + coord_flip() + facet_wrap(~method,scales = "free_x")
-
-
-
 ```
-
-
-
 
 ```{r,fig.height=16,fig.width=10}
 bp_decon_nnls_extended <- ggplot2::ggplot(decon_nnls_extended_tgs.m_short, ggplot2::aes(x=reorder(variable,value), y=value, fill=factor(treatment_descr))) + ggplot2::geom_boxplot()
@@ -339,42 +351,19 @@ ggsave(
   plot = last_plot())
 ```
 
-
-```{r}
-
-```
-
-
-```{r}
+```{r Previous_plot_without_theme}
 bp_decon_nnls_extended <- ggplot2::ggplot(decon_nnls_extended_tgs.m_short, ggplot2::aes(x=variable, y=value, fill=factor(treatment_descr))) + ggplot2::geom_boxplot()
-
 ```
 
-
-
-```{r,fig.height=20,fig.width=16}
+```{r Adding_theme,fig.height=20,fig.width=16}
 bp_decon_nnls_extended + ggplot2::theme(axis.text.x = element_blank(),strip.text = element_text(size=16),legend.text=element_text(size=14),axis.title.x = element_blank()) + ggplot2::labs(fill="Treatment",x = "Cell Type", y = "Proportion of Sample") + ggplot2::facet_wrap(~variable, scale="free") + ggplot2::scale_y_continuous(expand = c(0, 0), limits = c(0, NA))
 ```
 
-
-```{r}
+Investigate Neutrophils of healthy patients
+```{r Check_healthy_patients}
 neut_health<-decon_nnls_extended_tgs.m_short %>% filter(variable == "Neutrophils_EPIC" & treatment ==0) %>% dplyr::select(value)
-
-
-```
-
-```{r}
 mean(neut_health$value)
-```
 
-
-```{r}
 health_composition<-decon_nnls_extended_tgs.m %>% filter(treatment ==0) %>% group_by(variable) %>% summarise_at("value",mean)
 ```
-
-
-```{r}
- 
-```
-
 
