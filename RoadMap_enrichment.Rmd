@@ -8,19 +8,17 @@ output: html_notebook
 require(tidyverse)
 library(reshape2)
 library(GenomicRanges)
-require(MetBrewer)
-library(viridis)
 require(RColorBrewer)
 ```
 
 # Load input data
 ```{r}
-road_map <- read.table("databases/prom_enh.csv", sep = "\t", header = TRUE)
-main <- read.table("test/main.STEMI.csv", header = TRUE)
-samples <- read.table("test/samples.STEMI.csv", header = TRUE)
+road_map <- read.table("/local/rcuadrat/cfDNAprioritize/databases/prom_enh.csv", sep = "\t", header = TRUE)
+main <- read.table("/local/rcuadrat/cfDNAprioritize/test/main.STEMI.csv", header = TRUE)
+samples <- read.table("/local/rcuadrat/cfDNAprioritize/test/samples.STEMI.csv", header = TRUE)
 
-
-cell_types <- (unfactor(unique(road_map$Sample_desc)))
+##edited from unfactor() to unlist()
+cell_types <- (unlist(unique(road_map$Sample_desc)))
 
 Heart_vascular <- c("Fetal Heart", "Right Atrium", "Left Ventricle", "Right Ventricle", "Aorta", "HUVEC Umbilical Vein Endothelial Primary Cells")
 
@@ -41,7 +39,7 @@ cells_tissues_groups <- cbind(
   Foreskin, Lung, Breast, Pancreas, Lymphatic
 )
 cells_tissues_groups <- melt(cells_tissues_groups) %>%
-  select(-Var1) %>%
+  dplyr::select(-Var1) %>%
   unique()
 Others <- cell_types[!(cell_types %in% cells_tissues_groups$value)]
 Others <- data.frame("Others", Others)
@@ -114,10 +112,10 @@ result$final_enhancer_annotated %>%
 
 ## Extract a background and run enrichment test for cell types on DMRs
 ```{r Function_background_and_enrichment_tests}
-enrichment_cells <- function(DMRs, DM, w, h) {
+enrichment_cells <- function(DMRs, DM) {
   main <- read.table(DMRs, header = TRUE)
   # get just regions of DMR
-  DMRs <- main %>% select(chr, start, end)
+  DMRs <- main %>% dplyr::select(chr, start, end)
   # calculate 1000bp distant tiles
   DMRs$start_prev <- DMRs$start - 1000
   DMRs$end_prev <- DMRs$end - 1000
@@ -127,18 +125,18 @@ enrichment_cells <- function(DMRs, DM, w, h) {
 
   # getting the regions after and before DMR (1000bp distant)
   prev <- DMRs %>%
-    select(chr, start_prev, end_prev) %>%
-    rename("start_prev" = "start", "end_prev" = "end")
+    dplyr::select(chr, start_prev, end_prev) %>%
+    dplyr::rename("start" = "start_prev", "end" = "end_prev")
   after <- DMRs %>%
-    select(chr, start_after, end_after) %>%
-    rename("start_after" = "start", "end_after" = "end")
+    dplyr::select(chr, start_after, end_after) %>%
+    dplyr::rename("start" = "start_after", "end" = "end_after")
   background_regions <- rbind(prev, after)
 
   DM_test <- read.table(DM, sep = "\t", header = TRUE)
-  DM_test <- DM_test %>% rename("seqnames" = "chr")
+  DM_test <- DM_test %>% dplyr::rename("chr" = "seqnames")
   background_regions <- merge(background_regions, DM_test, by = c("chr", "start", "end"), all.x = TRUE)
-  background_regions_notsig <- background_regions %>% filter(qvalue > 0.05 | is.na(qvalue))
-  background <- background_regions_notsig %>% select(chr, start, end)
+  background_regions_notsig <- background_regions %>% dplyr::filter(qvalue > 0.05 | is.na(qvalue))
+  background <- background_regions_notsig %>% dplyr::select(chr, start, end)
   # number of tiles in the background
   ntiles <- nrow(background)
   # make a Genomic range with background tiles
@@ -195,7 +193,7 @@ enrichment_cells <- function(DMRs, DM, w, h) {
   # merge background and disease counts and percs
   final_perc <- merge(background_enhancer_annotated, disease_enhancer_annotated, by = 0)
   final_perc <- final_perc %>%
-    remove_rownames() %>%
+    # remove_rownames() %>%
     column_to_rownames(var = "Row.names")
 
   nDMRs <- nrow(main)
@@ -237,24 +235,68 @@ enrichment_cells <- function(DMRs, DM, w, h) {
     mutate(median_group = median(pvalue))
   sig_res <- ungroup(sig_res)
 
+  levels(sig_res$Cell_group) <- c("Heart vascular",  "Carcinoma", "Blood", "Skeletal muscle", "Stem", "Nervous system",  "Digestive", "Foreskin", "Lung", "Breast", "Pancreas", "Lymphatic", "Others")
+  
+  levels(sig_res$celltype) <- c(
+  "A549 EtOH 0.02pct Lung Carcinoma Cell Line", "Adipose Derived Mesenchymal Stem Cell Cultured Cells", "Adipose Nuclei",
+  "     Bone Marrow Derived Cultured Mesenchymal Stem Cells", "Brain Angular Gyrus", "Brain Anterior Caudate",
+  "Brain Cingulate Gyrus", "Brain Germinal Matrix", "Brain Hippocampus Middle",
+  "Brain Inferior Temporal Lobe", "Brain Substantia Nigra", "Brain Dorsolateral Prefrontal Cortex",
+  "Breast Myoepithelial Primary Cells", "Breast variant Human Mammary Epithelial Cells (vHMEC)", "Colon Smooth Muscle",
+  "Dnd41 TCell Leukemia Cell Line", "Duodenum Mucosa", "Duodenum Smooth Muscle",
+  "Fetal Adrenal Gland", "Fetal Intestine Small", "Fetal Kidney",
+  "Fetal Lung", "Fetal Stomach", "Fetal Thymus",
+  "Foreskin Fibroblast Primary Cells skin01", "Foreskin Fibroblast Primary Cells skin02", "Foreskin Keratinocyte Primary Cells skin02",
+  "Foreskin Keratinocyte Primary Cells skin03", "Foreskin Melanocyte Primary Cells skin01", "GM12878 Lymphoblastoid Cells",
+  "Ganglion Eminence derived primary cultured neurospheres", "HMEC Mammary Epithelial Primary Cells", "HSMM Skeletal Muscle Myoblasts Cells",
+  "HUVEC Umbilical Vein Endothelial Primary Cells", "HeLa-S3 Cervical Carcinoma Cell Line", "IMR90 fetal lung fibroblasts Cell Line",
+  "K562 Leukemia Cells", "Liver", "Mesenchymal Stem Cell Derived Adipocyte Cultured Cells",
+  "Mesenchymal Stem Cell Derived Chondrocyte Cultured Cells", "Monocytes-CD14+ RO01746 Primary Cells", "Muscle Satellite Cultured Cells",
+  "NHEK-Epidermal Keratinocyte Primary Cells", "Osteoblast Primary Cells", "Primary B cells from cord blood",
+  "Primary B cells from peripheral blood", "Primary Natural Killer cells from\302\240peripheral\302\240blood", "Primary T CD8+ naive cells from peripheral blood",
+  "Primary T cells from\302\240peripheral\302\240blood", "Primary T helper 17 cells PMA-I stimulated", "Primary T helper cells PMA-I stimulated",
+  "Primary T helper naive cells from peripheral blood", "Primary T regulatory cells from\302\240peripheral\302\240blood", "Primary hematopoietic stem cells G-CSF-mobilized Female",
+  "Primary hematopoietic stem cells G-CSF-mobilized Male", "Primary hematopoietic stem cells short term culture", "Primary monocytes from\302\240peripheral\302\240blood",
+  "Primary neutrophils from\302\240peripheral\302\240blood", "Rectal Mucosa Donor 31", "Rectal Smooth Muscle",
+  "Skeletal Muscle Female", "Skeletal Muscle Male", "Stomach Mucosa",
+  "Stomach Smooth Muscle", "hESC Derived CD184+ Endoderm Cultured Cells")
+  
+  return(sig_res)
+}
+```
 
-  pper <- ggplot(sig_res, aes(reorder(celltype, -median_group), value, fill = variable)) +
+## Plot results
+```{r Run_function}
+stemi_enrichment <- enrichment_cells("/local/rcuadrat/cfDNAprioritize/test/main.STEMI.csv", "/local/AAkalin_cardiac/Results/cardiac/from-rafael/STEMI_DR_full.csv") #, w = 36, h = 28)
+nstemi_enrichment <- enrichment_cells("/local/rcuadrat/cfDNAprioritize/test/main.NSTEMI.csv", "/local/AAkalin_cardiac/Results/cardiac/from-rafael/NSTEMI_DR_full.csv") #, w = 36, h = 14)
+ua_enrichment <- enrichment_cells("/local/rcuadrat/cfDNAprioritize/test/main.UA.csv", "/local/AAkalin_cardiac/Results/cardiac/from-rafael/UA_DR_full.csv") #, w = 36, h = 14)
+```
+```{r Stemi_plotting}
+color_selection <- RColorBrewer::brewer.pal(n=8, name="Dark2")[c(8,6)]
+  
+  left_stemi <- ggplot(stemi_enrichment, aes(reorder(celltype, -median_group), value, fill = variable)) +
     geom_bar(stat = "identity", position = "dodge") +
     coord_flip() +
     ylab("Overlap [%]") +
     xlab("") +
     theme_bw() +
-    theme(text = element_text(size = 32)) +
-    theme(legend.title = element_blank(), legend.position = c(0.85, 0.05))
-
-  options(repr.plot.width = 12, repr.plot.height = 12)
-  dodger <- position_dodge(width = 0.3)
+    labs(fill="Region")+
+    theme(text = element_text(size = 32),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_rect(colour = NA),        
+        axis.line.x = element_line(colour = "black"),
+        axis.line.y = element_line(colour = "black"),
+        axis.title.x = element_blank())+
+    scale_fill_manual(values=color_selection)
   
+  #options(repr.plot.width = 12, repr.plot.height = 12)
+  #dodger <- position_dodge(width = 0.3)
   
   # Elements like pointrange and position_dodge only work when the outcome
   #   is mapped to y, need to go through with OR set as y then flip at the
   #   end
-  op <- ggplot(sig_res, aes(y = odds, x = reorder(celltype, -median_group))) +
+  middle <- ggplot(stemi_enrichment, aes(y = odds, x = reorder(celltype, -median_group))) +
     geom_pointrange(aes(ymin = min, ymax = max),
       position = dodger,
       size = 1
@@ -265,59 +307,216 @@ enrichment_cells <- function(DMRs, DM, w, h) {
       minor_breaks = NULL
     ) +
     labs(y = "Odds ratio") +
-    coord_flip(ylim = c(0.1, 10)) +
+    coord_flip(ylim = c(0.2, 1.6)) +
     theme_bw() +
-    theme(text = element_text(size = 32))
+    theme(text = element_text(size = 32),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_rect(colour = NA),        
+        axis.line.x = element_line(colour = "black"),
+        axis.line.y = element_line(colour = "black"),
+        axis.title = element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        )          
 
-  n <- 13
-  qual_col_pals <- brewer.pal.info[brewer.pal.info$category == "qual", ]
-  col_vector <- unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
-
-  p <- ggplot(
-    data = sig_res,
+  right_stemi <- ggplot(
+    data = stemi_enrichment,
     aes(x = reorder(celltype, -median_group), y = -log10(pvalue), fill = Cell_group)
   ) +
     geom_bar(stat = "identity") +
     theme_bw() +
     coord_flip() +
     labs(fill="Cell type")+
-    theme(text = element_text(size = 32)) +
-    scale_fill_manual(values = col_vector)
-
+    theme(text = element_text(size = 32),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_rect(colour = NA),        
+        axis.line.x = element_line(colour = "black"),
+        axis.line.y = element_line(colour = "black"),
+        axis.title = element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.text.y=element_blank())          +
+    scale_fill_brewer(palette="Paired")
   
-  options(repr.plot.width = w, repr.plot.height = h)
 
-  cowplot::plot_grid(pper, op +
-    theme(
-      axis.text.y = element_blank(),
-      axis.ticks.y = element_blank(),
-      axis.title.y = element_blank()
-    ), p +
-    theme(
-      axis.text.y = element_blank(),
-      axis.ticks.y = element_blank(),
-      axis.title.y = element_blank()
-    ), nrow = 1, rel_widths = c(2, 0.4, 1))
-}
+#Unite all figures in panel  
+  stemi_panel<-cowplot::plot_grid(left_stemi+theme(legend.position = "none"), middle, right_stemi+theme(legend.position = "none"), nrow = 1, rel_widths = c(2, 0.4, 1))
 ```
 
-## Plot results
-```{r}
-stemi_plot <- enrichment_cells("test/main.STEMI.csv", "STEMI_DR_full.csv", w = 36, h = 28)
-nstemi_plot <- enrichment_cells("test/main.NSTEMI.csv", "NSTEMI_DR_full.csv", w = 36, h = 14)
-ua_plot <- enrichment_cells("test/main.UA.csv", "UA_DR_full.csv", w = 36, h = 14)
+```{r Nstemi_plotting}
+  left <- ggplot(nstemi_enrichment, aes(reorder(celltype, -median_group), value, fill = variable)) +
+    geom_bar(stat = "identity", position = "dodge") +
+    coord_flip() +
+    ylab("Overlap [%]") +
+    xlab("") +
+    theme_bw() +
+    theme(text = element_text(size = 32),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_rect(colour = NA),        
+        axis.line.x = element_line(colour = "black"),
+        axis.line.y = element_line(colour = "black"),
+        legend.title = element_blank(), 
+        legend.position = "none",
+        axis.title.x = element_blank())+
+    scale_fill_manual(values=color_selection)
+  
+  #options(repr.plot.width = 12, repr.plot.height = 12)
+  #dodger <- position_dodge(width = 0.3)
+  
+  # Elements like pointrange and position_dodge only work when the outcome
+  #   is mapped to y, need to go through with OR set as y then flip at the
+  #   end
+  middle <- ggplot(nstemi_enrichment, aes(y = odds, x = reorder(celltype, -median_group))) +
+    geom_pointrange(aes(ymin = min, ymax = max),
+      position = dodger,
+      size = 1
+    ) +
+    geom_hline(yintercept = 1.0, linetype = "dotted", size = 1) +
+    scale_y_log10(
+      breaks = c(0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10),
+      minor_breaks = NULL
+    ) +
+    labs(y = "Odds ratio") +
+    coord_flip(ylim = c(0.2, 1.6)) +
+    theme_bw() +
+    theme(text = element_text(size = 32),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_rect(colour = NA),        
+        axis.line.x = element_line(colour = "black"),
+        axis.line.y = element_line(colour = "black"),
+        axis.title = element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        )          
+
+  right <- ggplot(
+    data = nstemi_enrichment,
+    aes(x = reorder(celltype, -median_group), y = -log10(pvalue), fill = Cell_group)
+  ) +
+    geom_bar(stat = "identity") +
+    theme_bw() +
+    coord_flip() +
+    labs(fill="Cell type")+
+    theme(text = element_text(size = 32),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_rect(colour = NA),        
+        axis.line.x = element_line(colour = "black"),
+        axis.line.y = element_line(colour = "black"),
+        axis.title = element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.text.y=element_blank(),
+        legend.position = "none")          +
+    scale_fill_brewer(palette="Paired")
+  
+
+#Unite all figures in panel  
+nstemi_panel<-cowplot::plot_grid(left, middle, right, nrow = 1, rel_widths = c(2, 0.4, 1))
 ```
 
-```{r Make_Publication_Figure_S5}
+```{r UA_plotting}
+  left <- ggplot(ua_enrichment, aes(reorder(celltype, -median_group), value, fill = variable)) +
+    geom_bar(stat = "identity", position = "dodge") +
+    coord_flip() +
+    ylab("Overlap [%]") +
+    xlab("") +
+    theme_bw() +
+    theme(text = element_text(size = 32),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_rect(colour = NA),        
+        axis.line.x = element_line(colour = "black"),
+        axis.line.y = element_line(colour = "black"),
+        legend.title = element_blank(), 
+        legend.position = "none")+
+    scale_fill_manual(values=color_selection)
+  
+  #options(repr.plot.width = 12, repr.plot.height = 12)
+  #dodger <- position_dodge(width = 0.3)
+  
+  # Elements like pointrange and position_dodge only work when the outcome
+  #   is mapped to y, need to go through with OR set as y then flip at the
+  #   end
+  middle <- ggplot(ua_enrichment, aes(y = odds, x = reorder(celltype, -median_group))) +
+    geom_pointrange(aes(ymin = min, ymax = max),
+      position = dodger,
+      size = 1
+    ) +
+    geom_hline(yintercept = 1.0, linetype = "dotted", size = 1) +
+    scale_y_log10(
+      breaks = c(0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10),
+      minor_breaks = NULL
+    ) +
+    labs(y = "Odds ratio") +
+    coord_flip(ylim = c(0.2, 1.6)) +
+    theme_bw() +
+    theme(text = element_text(size = 32),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_rect(colour = NA),        
+        axis.line.x = element_line(colour = "black"),
+        axis.line.y = element_line(colour = "black"),
+        axis.title.y = element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        )          
+
+  right <- ggplot(
+    data = ua_enrichment,
+    aes(x = reorder(celltype, -median_group), y = -log10(pvalue), fill = Cell_group)
+  ) +
+    geom_bar(stat = "identity") +
+    theme_bw() +
+    coord_flip() +
+    labs(fill="Cell type")+
+    theme(text = element_text(size = 32),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_rect(colour = NA),        
+        axis.line.x = element_line(colour = "black"),
+        axis.line.y = element_line(colour = "black"),
+        axis.title.y = element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.text.y=element_blank(),
+        legend.position = "none")          +
+    scale_fill_brewer(palette="Paired")
+  
+
+#Unite all figures in panel  
+ua_panel<-cowplot::plot_grid(left, middle, right, nrow = 1, rel_widths = c(2, 0.4, 1))
+```
+```{r, fig.width=20, fig.height=30}
+stemi_panel
+```
+
+```{r Make_Publication_Figure_S5, fig.width=36, fig.height=48}
+legend_1 <- cowplot::get_legend(right_stemi + theme(legend.box.margin = margin(0, 0, 0, 12)))
+legend_2 <- cowplot::get_legend(left_stemi + theme(legend.box.margin = margin(0,0,0,12)))
+
+
 options(repr.plot.width = 36, repr.plot.height = 48)
-cowplot::plot_grid(stemi_plot, nstemi_plot +
-  theme(
-    axis.text.x = element_blank(),
-    axis.ticks.x = element_blank(),
-    axis.title.x = element_blank()
-  ),
-ua_plot,
-nrow = 3, rel_heights = c(7, 1.5, 1.7),
-labels = c("STEMI", "NSTEMI", "UA"), label_size = 32
-)
+
+all_panels <- cowplot::plot_grid(stemi_panel, nstemi_panel, ua_panel,
+nrow = 3, ncol=1, rel_heights = c(nrow(stemi_enrichment)-25, nrow(nstemi_enrichment), nrow(ua_enrichment)),
+labels = c("STEMI", "NSTEMI", "UA"), 
+label_size = 50,
+label_x = -0.0001,
+label_y = 1,
+align="hv",
+hjust=0)
+ 
+legends <- cowplot::plot_grid(legend_1, legend_2, nrow=9, align = "v")
+cowplot::plot_grid(all_panels, legends, ncol=2, rel_widths = c(0.8, 0.2))
+ggsave(filename="/local/AAkalin_cardiac/Results/cardiac/Plots/FigureS5.pdf", units = "in", width=36, height=48, bg="white")
+
 ```
+
+
+
+
+
+
+
