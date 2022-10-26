@@ -1,0 +1,1945 @@
+---
+title: "Targeted_Seq_Normalisation_and_DMR_Validation"
+author: "Anja Rathgeber"
+date: "17.August.2022"
+output:
+  html_document:
+    toc: yes
+    df_print: paged
+    toc_depth: 4
+    toc_float: true
+  html_notebook:
+    toc: yes
+    toc_depth: 4
+    toc_float: true
+---
+# GOAL
+The aim of this script is to compare if there is a systemic bias between WGBS processed samples and targeted sequenced samples and to remove it.
+Also, the targeted sequencing data functions as validation cohort for the DMRs identified from the discovery cohort.
+
+# Conclusion
+The sequencing bias could best be removed by combining a quantile normalisation with a ComBat adjustment.Further approaches e.g. winsorization have been also tested in this script.
+
+## Load Libraries
+```{r Load_libraries, warning=FALSE, error=FALSE, message=FALSE}
+library(tidyverse)
+library(DescTools)
+library(preprocessCore)
+library(ggfortify)
+library(sva)
+library(ggpubr)
+library(ggrepel)
+```
+## Set Theme
+```{r Set_Theme_For_Plots}
+theme_Publication <- function(base_size=14, base_family="sans") {
+      library(grid)
+      library(ggthemes)
+      (theme_foundation(base_size=base_size, base_family=base_family)
+       + theme(plot.title = element_text(face = "bold",
+                                         size = rel(1.2), hjust = 0.5, margin = margin(0,0,20,0)),
+               text = element_text(),
+               panel.background = element_rect(colour = NA),
+               plot.background = element_rect(colour = NA),
+               panel.border = element_rect(colour = NA),
+               axis.title = element_text(face = "bold",size = rel(1)),
+               axis.title.y = element_text(angle=90,vjust =2),
+               axis.title.x = element_text(vjust = -0.2),
+               axis.text = element_text(), 
+               axis.line.x = element_line(colour="black"),
+               axis.line.y = element_line(colour="black"),
+               axis.ticks = element_line(),
+               panel.grid.major = element_line(colour="#f0f0f0"),
+               panel.grid.minor = element_blank(),
+               legend.key = element_rect(colour = NA),
+               legend.position = "bottom",
+               legend.direction = "horizontal",
+               legend.box = "vetical",
+               legend.key.size= unit(0.5, "cm"),
+               #legend.margin = unit(0, "cm"),
+               legend.title = element_text(face="italic"),
+               plot.margin=unit(c(10,5,5,5),"mm"),
+               strip.background=element_rect(colour="#f0f0f0",fill="#f0f0f0"),
+               strip.text = element_text(face="bold")
+       ))
+      
+}
+```
+
+## Define Inputs
+```{r Load_input_data, message=FALSE}
+meth_perc_all_tiles_validation <- readRDS(file = "/local/rcuadrat/data_for_altuna/methyl_perc_all_tiles_no_CAD_validation.RDS")
+meth_perc_all_tiles_WGBS <- readRDS(file = "/local/rcuadrat/data_for_altuna/methyl_perc_all_tiles_no_CAD_WGBS.RDS")
+
+metadata <- readRDS(file = "/local/rcuadrat/data_for_altuna/metadata_no_CAD.RDS")
+data_for_scatterplot <- readRDS(file = "/local/rcuadrat/data_for_altuna/data_for_scatterplot.rds")
+
+methylBaseDB_validation_no_CAD <- readRDS("/local/rcuadrat/data_for_altuna/methylBaseDB_validation_no_CAD.RDS")
+methylBaseDB_WGBS_all_samples <- readRDS("/local/rcuadrat/data_for_altuna/methylBaseDB_WGBS_all_samples.RDS")
+
+methylDiff_WGBS <- readRDS(file= "/local/AAkalin_cardiac/Results/cardiac/RDS/myDiff25p_tiled_list_v1.RDS")
+methylDiff_validation<- readRDS(file= "/local/rcuadrat/data_for_altuna/methylDiff_validation_ACS.RDS")
+
+methylDiff_WGBS <- methylDiff_WGBS[1:3]
+names(methylDiff_WGBS)<-c("STEMI", "NSTEMI", "UA")
+methylDiff_WGBS <- methylDiff_WGBS %>% map2(names(.), ~ as_tibble(.x) %>% 
+                                              add_column(condition=.y) %>% 
+                                              tidyr::unite(tiles, seqnames, start, end, condition, sep="."))
+
+methylDiff_validation <- methylDiff_validation %>% map2(names(.), ~ methylKit::getData(.x) %>% 
+                                                          as_tibble(.x) %>% 
+                                                          add_column(condition=.y) %>% 
+                                                          tidyr::unite(tiles, chr, start, end, condition, sep="."))
+
+clinical_markers<-readxl::read_excel("/local/AAkalin_cardiac/metadata/WGBS_ShortTableCorrelations.xlsx")
+suppl_tbl_2 <- readRDS("/local/rcuadrat/cfdna_wgbs/suppl_tbl_2.RDS")
+clinical_markers<-merge(suppl_tbl_2,clinical_markers,by="Sample")
+#clinical_markers = clinical_markers %>% rename("CRP (mg/dl)"="CRP(mg/dl_<5)","TroponinT (ng/l)"="TroponinThs_t1 (ng/l <14or<50)","CK (U/l)"="CK (U/l _<190)","CK max (U/l)"="CKmax(U/l_<190)","CK-MB (U/l)"="CK-MB(U/l <24)","CK-MB max (U/l)"="CK-MB_Max")
+clinical_markers_ACS<-clinical_markers %>% filter(treatment !=0)
+```
+
+## Analysis
+### All Data
+```{r Specify_sequencing_method_and_disease_in_metadata }
+seq_method <- rep(c("WGBS", "targeted"), times = c(29, 11))
+metadata$seq_method <- seq_method
+
+metadata <- metadata %>%
+  mutate(condition = case_when(
+    (treatment == 0) ~ "Control",
+    (treatment == 1) ~ "STEMI",
+    (treatment == 2) ~ "NSTEMI",
+    (treatment == 3) ~ "UA"
+  ))
+```
+
+```{r Inspect_loci_of_WGS_and targeted_seq data, echo=FALSE}
+
+# tile_loci=list(rownames(meth_perc_all_tiles_validation), rownames(meth_perc_all_tiles_WGBS)) %>%
+#       set_names(c("target","WGBS")) %>%
+#     map_dfr(enframe, .id="seq") %>%
+#     separate(value, into=c("chrom","start","end"),sep="\\.")
+
+# tile_loci %>%
+#   arrange(chrom, start, seq) %>%
+#   head(n=50)
+```
+
+```{r Overlap_and_Difference_between_data_set_tiles}
+nrow(meth_perc_all_tiles_validation)
+length(setdiff(rownames(meth_perc_all_tiles_validation), rownames(meth_perc_all_tiles_WGBS)))
+length(intersect(rownames(meth_perc_all_tiles_validation), rownames(meth_perc_all_tiles_WGBS)))
+all_common_tiles<-intersect(rownames(meth_perc_all_tiles_validation), rownames(meth_perc_all_tiles_WGBS))
+```
+
+Find out if tiles which do not match WGBS are mapping to specific location
+Altuna:"...we have designed probes for 10K regions but for whatever reason some probes don’t work that’s why targeted sequencing doesn’t cover whole 10K tiles but same tiles exist on WGBS because that was the basis of our design. losing probes are expected, the efficiency of targeting is 80-90%" 
+```{r Missing_tiles}
+missing_tiles <- setdiff(rownames(meth_perc_all_tiles_validation), rownames(meth_perc_all_tiles_WGBS))
+
+missing_tiles <- tibble(missing_tiles) %>%
+  separate(missing_tiles, into = c("chrom", "start", "end"), sep = "\\.") %>%
+  arrange(chrom, start, end)
+```
+
+Map corresponding tiles of both seq methods in one
+```{r Determine_tile_overlap_between_seq_methods}
+overlap_tiles_validation_WGBS <- inner_join(x=as_tibble(meth_perc_all_tiles_validation, rownames = "tiles"), y=as_tibble(meth_perc_all_tiles_WGBS, rownames = "tiles"))
+```
+
+Transform to long format
+```{r Raw_Data_in_long_with_metadata }
+all_data <- overlap_tiles_validation_WGBS %>%
+  pivot_longer(-tiles, names_to = "sample_ids", values_to = "perc_meth") %>%
+  left_join(metadata, by = "sample_ids") %>%
+  mutate(treatment = as.factor(treatment))
+```
+
+### Raw Data
+```{r Violin_and_Boxplots_Raw_Data, fig.dim=c(10,10)}
+p1 <- all_data %>% ggplot(aes(x = condition, y = perc_meth, fill = seq_method)) +
+  geom_boxplot() +
+  ylab("Methylation [%]") +
+  xlab("ACS Type") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p2 <- all_data %>% ggplot(aes(x = condition, y = perc_meth, fill = seq_method)) +
+  geom_violin() +
+  ylab("Methylation [%]") +
+  xlab("ACS Type") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p3 <- all_data %>% ggplot(aes(x = condition, y = perc_meth)) +
+  geom_violin(aes(fill = seq_method)) +
+  geom_boxplot(aes(fill = seq_method), width = 0.05) +
+  ylab("Methylation [%]") +
+  xlab("ACS Type") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  facet_grid(seq_method ~ .)
+
+p4 <- all_data %>% ggplot(aes(x = condition, y = perc_meth)) +
+  geom_violin(fill = "#7C7CFF") +
+  ylab("Methylation [%]") +
+  xlab("ACS Type") +
+  labs(title = "condition") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+annotate_figure(ggarrange(p1, p2, p3, p4, nrow=2, ncol=2, labels="AUTO", common.legend = TRUE, legend="right"), text_grob("Raw Data \nAll Common Tiles", face = "bold", size=16))
+
+p5 <- all_data %>%
+  filter(seq_method == "WGBS") %>%
+  ggplot(aes(x = sample_ids, y = perc_meth)) +
+  geom_violin(fill = "#F8766D") +
+  geom_boxplot(width = 0.05) +
+  ylab("Methylation [%]") +
+  xlab("Sample") +
+  labs(title = "WGBS") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p6 <- all_data %>%
+  filter(seq_method == "targeted") %>%
+  ggplot(aes(x = sample_ids, y = perc_meth)) +
+  geom_violin(fill = "#00BFC4") +
+  geom_boxplot(width = 0.05) +
+  ylab("Methylation [%]") +
+  xlab("Sample") +
+  labs(title = "Targeted Sequencing") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+
+p7 <- all_data %>% dplyr::group_by(seq_method) %>% 
+  dplyr::arrange(sample_ids) %>% 
+  dplyr::mutate(sample_ids=factor(sample_ids)) %>% 
+  ggplot(aes(x = sample_ids, y = perc_meth, fill = seq_method)) +
+  geom_violin() +
+  geom_boxplot(width = 0.05) +
+  ylab("Methylation [%]") +
+  xlab("Sample") +
+  #labs(title = "Raw Data \nAll Common Tiles") +
+  scale_fill_manual(values = c("darkorchid4", "darkturquoise"), name = "Method")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5, 
+                                  face="bold", size=16), 
+        axis.text.x = element_text(angle = 45, 
+                                   vjust = 0.8, 
+                                   hjust = 1), 
+        legend.position = "bottom",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(colour = NA),
+        plot.background = element_rect(colour = NA),
+        strip.background=element_rect(colour="#f0f0f0",fill="#f0f0f0"),
+        strip.text = element_text(face="bold"),
+        axis.line.x = element_line(colour="black"),
+        axis.line.y = element_line(colour="black"),
+        panel.border = element_rect(colour = NA)
+)
+
+
+annotate_figure(ggarrange(p5, p6, nrow=2, ncol=1, labels="AUTO"), text_grob("Raw Data \nAll Common Tiles", face = "bold", size=16))
+
+p7
+```
+
+#### Compare how mean difference in methylation is distributed
+```{r Distribution_of_Methylation_Difference_Violinplot, eval=FALSE, echo=FALSE}
+overlap_tiles_validation_WGBS %>%
+  pivot_longer(-tiles, names_to = "sample_ids", values_to = "perc_meth") %>%
+  left_join(metadata, by = "sample_ids") %>%
+  mutate(treatment = as.factor(treatment)) %>%
+  group_by(treatment, tiles, seq_method) %>%
+  summarize(perc_meth = mean(perc_meth)) %>%
+  pivot_wider(names_from = "seq_method", values_from = "perc_meth") %>%
+  mutate(diff = WGBS - targeted) %>%
+  ggplot(aes(x = treatment, y = diff)) +
+  geom_violin()
+```
+
+#### Compare difference of mean of all all common tiles between targeted and WGBS from raw data
+```{r Scatterplot_Raw_Data_Common_Tiles, fig.dim=c(10,5)}
+# Map metadata and pivot
+overlap_tiles_validation_WGBS_mean <- overlap_tiles_validation_WGBS %>%
+  pivot_longer(-tiles, names_to = "sample_ids", values_to = "perc_meth") %>%
+  left_join(metadata, by = "sample_ids") %>%
+  mutate(treatment = as.factor(treatment))
+
+#calculate mean per condition
+overlap_tiles_validation_WGBS_mean <- overlap_tiles_validation_WGBS_mean %>%
+  group_by(tiles, seq_method, condition) %>%
+  summarise_at(vars(perc_meth), list(name = mean))
+overlap_tiles_validation_WGBS_mean <-
+  dplyr::rename(overlap_tiles_validation_WGBS_mean, mean = "name")
+
+#calculate difference of means
+overlap_tiles_validation_WGBS_mean_diff <- overlap_tiles_validation_WGBS_mean %>%
+  pivot_wider(values_from = mean, names_from =condition) %>%
+  mutate(meth.diff_STEMI = STEMI - Control,
+         meth.diff_NSTEMI = NSTEMI - Control,
+         meth.diff_UA = UA - Control) %>%
+  dplyr::select(-c(Control, NSTEMI, STEMI, UA)) %>%
+  dplyr::rename(STEMI = "meth.diff_STEMI", 
+                NSTEMI ="meth.diff_NSTEMI", 
+                UA = "meth.diff_UA") %>%
+  pivot_longer(-c(tiles, seq_method), names_to = "condition", values_to = "meth_diff" ) %>%
+  pivot_wider(names_from = "seq_method", values_from ="meth_diff") %>%
+  dplyr::rename(meth.diff.WGBS = "WGBS", meth.diff.targeted = "targeted")
+
+
+#Calculate threshold for scatterplot
+overlap_tiles_validation_WGBS_mean_diff <- overlap_tiles_validation_WGBS_mean_diff %>% 
+  mutate(threshold_25= case_when((((25 <= meth.diff.WGBS) & (25 <= meth.diff.targeted))  | (((meth.diff.WGBS <=-25) & (meth.diff.targeted <=-25))) ) ~ "|25%|", TRUE ~ "not in range"))
+
+
+# Plot
+overlap_tiles_validation_WGBS_mean_diff %>%
+  ggplot(aes(x = meth.diff.targeted, y = meth.diff.WGBS, colour=threshold_25)) +
+  geom_point(shape = 16, size=2, alpha=0.6) +
+  stat_cor(method="pearson")+
+  geom_vline(xintercept = c(-25, 25), linetype="dotted")+
+  geom_hline(yintercept = c(-25, 25), linetype="dotted")+
+  ylab("Mean Methylation Difference WGBS") +
+  xlab("Mean Methylation Difference Targeted Sequencing") +
+  labs(title = "Raw Data \nAll Common Tiles", colour="Threshold") +
+  theme(plot.title = element_text(hjust = 0.5, face ="bold", size=16), aspect.ratio = 1) +
+  scale_color_manual(values=c("#919494", "#7CAE00"))+
+  facet_grid(cols = vars(condition))
+
+p28 <-
+  overlap_tiles_validation_WGBS_mean_diff %>%
+  ggplot(aes(x = condition, y = meth.diff.targeted, fill = condition)) +
+  geom_boxplot(outlier.shape = NA) +
+  ylab("Mean Methylation Difference [%]") +
+  xlab("ACS Type") +
+  labs(title = "Targeted Sequencing") +
+  scale_fill_discrete(name = "ACS Type") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  ylim(-100, 100)
+
+p29 <-
+  overlap_tiles_validation_WGBS_mean_diff %>%
+  ggplot(aes(x = condition, y = meth.diff.WGBS, fill = condition)) +
+  geom_boxplot(outlier.shape = NA) +
+  ylab("Mean Methylation Difference [%]") +
+  xlab("ACS Type") +
+  labs(title = "WGBS") +
+  scale_fill_discrete(name = "ACS Type") +
+  ylim(-100, 100) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+annotate_figure(ggarrange(p28, p29, nrow=1, ncol=2, labels="AUTO", common.legend = TRUE, legend="right"), text_grob("Raw Data \nAll Common Tiles", face = "bold", size=16))
+```
+
+### Winsorization
+```{r Winsorization_Box_and Violinplots, fig.dim=c(10,10)}
+tiles <- unlist(overlap_tiles_validation_WGBS[, 1])
+
+overlap_tiles_validation_WGBS_winsorized <- as_tibble(lapply(overlap_tiles_validation_WGBS[, -1], Winsorize, probs = c(0.1, 0.9))) %>% 
+  add_column(tiles = tiles, .before = "2017") %>%
+  pivot_longer(-tiles, names_to = "sample_ids", values_to = "perc_meth") %>%
+  left_join(metadata, by = "sample_ids") %>%
+  mutate(treatment = as.factor(treatment))
+
+# Plot data to compare methylation between treated diseases
+p8 <- overlap_tiles_validation_WGBS_winsorized %>%
+  ggplot(aes(x = condition, y = perc_meth, fill = seq_method)) +
+  geom_boxplot() +
+  ylab("Methylation [%]") +
+  xlab("ACS Type") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p9 <- overlap_tiles_validation_WGBS_winsorized %>%
+  ggplot(aes(x = condition, y = perc_meth, fill = seq_method)) +
+  geom_violin() +
+  ylab("Methylation [%]") +
+  xlab("ACS Type") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p10 <- overlap_tiles_validation_WGBS_winsorized %>% ggplot(aes(x = condition, y = perc_meth)) +
+  geom_violin(aes(fill = seq_method)) +
+  geom_boxplot(aes(fill = seq_method), width = 0.05) +
+  ylab("Methylation [%]") +
+  xlab("ACS Type") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  facet_grid(seq_method ~ .)
+
+p11 <- overlap_tiles_validation_WGBS_winsorized %>% ggplot(aes(x = condition, y = perc_meth)) +
+  geom_violin(fill = "#7C7CFF") +
+  ylab("Methylation [%]") +
+  xlab("ACS Type") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+annotate_figure(ggarrange(p8, p9, p10, p11, common.legend = TRUE, legend="right", labels="AUTO", nrow=2, ncol=2), text_grob("Windsorized Data \nAll Common Tiles", face = "bold", size=16))
+
+p12 <- overlap_tiles_validation_WGBS_winsorized %>%
+  filter(seq_method == "WGBS") %>%
+  ggplot(aes(x = sample_ids, y = perc_meth)) +
+  geom_violin(fill = "#F8766D") +
+  geom_boxplot(width = 0.05) +
+  ylab("Methylation [%]") +
+  xlab("Sample") +
+  labs(title = "WGBS") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5), axis.text.x = element_text(angle = 45, vjust = 0.8, hjust = 1))
+
+p13 <- overlap_tiles_validation_WGBS_winsorized %>%
+  filter(seq_method == "targeted") %>%
+  ggplot(aes(x = sample_ids, y = perc_meth)) +
+  geom_violin(fill = "#00BFC4") +
+  geom_boxplot(width = 0.05) +
+  ylab("Methylation [%]") +
+  xlab("Sample") +
+  labs(title = "Targeted") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+overlap_tiles_validation_WGBS_winsorized %>% ggplot(aes(x = sample_ids, y = perc_meth, fill = seq_method)) +
+  geom_violin() +
+  geom_boxplot(width = 0.05) +
+  ylab("Methylation [%]") +
+  xlab("Sample") +
+  labs(title = "Windsorized Data\nAll Common Tiles") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold", size=16), axis.text.x = element_text(angle = 45, vjust = 0.8, hjust = 1))
+
+annotate_figure(ggarrange(p12, p13, nrow=2, ncol=1, labels="AUTO"), text_grob("Windsorized Data \nAll Common Tiles", face = "bold", size=16))
+```
+
+### Quantile Normalisation
+```{r Quantile_normalisation }
+# Seperate targeted and WGBS data into two tibbles
+targeted_meth_perc <- overlap_tiles_validation_WGBS %>% dplyr::select((metadata %>% filter(seq_method == "targeted"))$sample_ids)
+WGBS_meth_perc <- overlap_tiles_validation_WGBS %>% dplyr::select((metadata %>% filter(seq_method == "WGBS"))$sample_ids)
+
+# make WGBS data a vector
+WGBS_meth_perc_distribution <- c(t(WGBS_meth_perc))
+
+# normalise and assign column names to data
+targeted_meth_perc_normalised <- normalize.quantiles.use.target(as.matrix(targeted_meth_perc), WGBS_meth_perc_distribution, copy = TRUE) %>% as_tibble()
+colnames(targeted_meth_perc_normalised) <- colnames(targeted_meth_perc)
+
+# add tiles column and join both dataframes
+targeted_meth_perc_normalised <- targeted_meth_perc_normalised %>%
+  add_column(tiles = tiles, .before = "2017")
+WGBS_meth_perc <- WGBS_meth_perc %>%
+  add_column(tiles = tiles, .before = "N1")
+
+overlap_normalised <- WGBS_meth_perc %>% left_join(targeted_meth_perc_normalised, by = "tiles")
+
+# map metadata and pivot
+overlap_normalised <- overlap_normalised %>%
+  pivot_longer(-tiles, names_to = "sample_ids", values_to = "perc_meth") %>%
+  left_join(metadata, by = "sample_ids") %>%
+  mutate(treatment = as.factor(treatment))
+```
+
+```{r Violin_and_Boxplots_Quantile_Normalisation, fig.dim=c(10,10)}
+p14 <- overlap_normalised %>% ggplot(aes(x = condition, y = perc_meth, fill = seq_method)) +
+  geom_boxplot() +
+  ylab("Methylation [%]") +
+  xlab("ACS Type") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p15 <- overlap_normalised %>% ggplot(aes(x = condition, y = perc_meth, fill = seq_method)) +
+  geom_violin() +
+  ylab("Methylation [%]") +
+  xlab("ACS Type") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p16 <- overlap_normalised %>% ggplot(aes(x = condition, y = perc_meth)) +
+  geom_violin(aes(fill = seq_method)) +
+  geom_boxplot(aes(fill = seq_method), width = 0.05) +
+  ylab("Methylation [%]") +
+  xlab("ACS Type") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  facet_grid(seq_method ~ .)
+
+p17 <- overlap_normalised %>% ggplot(aes(x = condition, y = perc_meth)) +
+  geom_violin(fill = "#7C7CFF") +
+  ylab("Methylation [%]") +
+  xlab("ACS Type") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+annotate_figure(ggarrange(p14, p15, p16, p17, nrow=2, ncol=2, labels="AUTO", common.legend = TRUE, legend="right"), text_grob("Quantile Normalised Data \nAll Common Tiles", face = "bold", size=16))
+
+p18 <- overlap_normalised %>%
+  filter(seq_method == "targeted") %>%
+  ggplot(aes(x = sample_ids, y = perc_meth)) +
+  geom_violin(fill = "#00BFC4") +
+  geom_boxplot(width = 0.05) +
+  ylab("Methylation [%]") +
+  xlab("Sample") +
+  labs(title = "Targeted Sequencing") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5), axis.text.x = element_text(angle = 45, vjust = 0.8, hjust = 1))
+
+p19 <- overlap_normalised %>%
+  filter(seq_method == "WGBS") %>%
+  ggplot(aes(x = sample_ids, y = perc_meth)) +
+  geom_violin(fill = "#F8766D") +
+  geom_boxplot(width = 0.05) +
+  ylab("Methylation [%]") +
+  xlab("Sample") +
+  labs(title = "WGBS") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5), axis.text.x = element_text(angle = 45, vjust = 0.8, hjust = 1))
+
+overlap_normalised %>% ggplot(aes(x = sample_ids, y = perc_meth, fill = seq_method)) +
+  geom_violin() +
+  geom_boxplot(width = 0.05) +
+  ylab("Methylation [%]") +
+  xlab("Sample") +
+  labs(title = "Quantile Normalised Data") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold", size=16), axis.text.x = element_text(angle = 45, vjust = 0.8, hjust = 1))
+
+annotate_figure(ggarrange(p18, p19, nrow=2, ncol=1, labels="AUTO"), text_grob("Quantile Normalised Data \nAll Common Tiles", face = "bold", size=16))
+
+```
+
+```{r Calculate_mean_methylation_of_sample}
+overlap_normalised_mean <- overlap_normalised %>%
+  group_by(tiles, seq_method, condition) %>%
+  summarise_at(vars(perc_meth), list(name = mean))
+overlap_normalised_mean <- dplyr::rename(overlap_normalised_mean, mean = "name")
+
+overlap_normalised_mean_diff <- overlap_normalised_mean %>%
+  pivot_wider(values_from = mean, names_from = condition) %>%
+  mutate(
+    meth.diff_STEMI = STEMI - Control,
+    meth.diff_NSTEMI = NSTEMI - Control,
+    meth.diff_UA = UA - Control
+  ) %>%
+  dplyr::select(-c(Control, NSTEMI, STEMI, UA)) %>%
+  dplyr::rename(STEMI = "meth.diff_STEMI", NSTEMI = "meth.diff_NSTEMI", UA = "meth.diff_UA") %>%
+  pivot_longer(-c(tiles, seq_method),
+    names_to = "condition",
+    values_to = "meth_diff"
+  ) %>%
+  pivot_wider(names_from = "seq_method", values_from = "meth_diff") %>%
+  dplyr::rename(meth.diff.WGBS = "WGBS", meth.diff.targeted = "targeted")
+
+data_for_scatterplot <- data_for_scatterplot %>% tidyr::unite(tiles, seqnames, start, end, group, sep = ".")
+
+overlap_DM_data_normalised_mean_diff <- overlap_normalised_mean_diff %>%
+  tidyr::unite(tiles, tiles, condition, sep = ".") %>%
+  filter(tiles %in% c(data_for_scatterplot$tiles))
+
+data_for_scatterplot <- data_for_scatterplot %>% tidyr::separate(tiles, into = c("seqnames", "start", "end", "group"), sep = "\\.")
+
+overlap_DM_data_normalised_mean_diff <- overlap_DM_data_normalised_mean_diff %>% tidyr::separate(tiles, into = c("chrom", "start", "end", "condition"), sep = "\\.")
+```
+
+Compare relationship between raw and normalised data and seq technique
+```{r Scatterplots_Raw_Data_Coverage_weighted_and_Quantile_Normalisation, fig.dim=c(10, 10) }
+
+#Calculate threshold for scatterplot
+data_for_scatterplot <- data_for_scatterplot %>% 
+  mutate(threshold_25= case_when((((25 <= meth.diff.x) & (25 <= meth.diff.y))  | (((meth.diff.x <=-25) & (meth.diff.y <=-25))) ) ~ "|25%|", TRUE ~ "not in range"))
+
+overlap_DM_data_normalised_mean_diff <- overlap_DM_data_normalised_mean_diff %>% 
+  mutate(threshold_25= case_when((((25 <= meth.diff.targeted) & (25 <= meth.diff.WGBS))  | (((meth.diff.targeted <=-25) & (meth.diff.WGBS <=-25))) ) ~ "|25%|", TRUE ~ "not in range"))
+
+
+p20 <- data_for_scatterplot %>% 
+  ggplot(aes(x = meth.diff.x, y = meth.diff.y, colour=threshold_25)) +
+  geom_point(shape = 16, size=2, alpha=0.6) +
+  geom_vline(xintercept = c(-25, 25), linetype="dotted")+
+  geom_hline(yintercept = c(-25, 25), linetype="dotted")+
+  ylab("Weighted Mean Methylation \nDifference Y") +
+  xlab("Weighted Mean Methylation \nDifference X") +
+  labs(title = "Raw Data \nCoverage Weighted", colour="Threshold") +
+  stat_cor(method="pearson")+
+  ylim(-100, 100) +
+  xlim(-100, 100) +
+  theme(plot.title = element_text(hjust = 0.5, face="bold", size=16), aspect.ratio = 1) +
+  scale_color_manual(values=c("#919494", "#7CAE00"))+
+  facet_grid(cols = vars(group))
+
+p21 <- overlap_DM_data_normalised_mean_diff %>% 
+  ggplot(aes(x = meth.diff.targeted, y = meth.diff.WGBS, colour=threshold_25)) +
+  geom_point(shape = 16, size=2, alpha=0.6) +
+  geom_vline(xintercept = c(-25, 25), linetype="dotted")+
+  geom_hline(yintercept = c(-25, 25), linetype="dotted")+
+  ylab("Mean Methylation Difference WGBS") +
+  xlab("Mean Methylation Difference \nTargeted Sequencing") +
+  labs(title = "Quantile Normalised Data", colour="Threshold") +
+  stat_cor(method="pearson")+
+  ylim(-100, 100) +
+  xlim(-100, 100) +
+  theme(plot.title = element_text(hjust = 0.5, face="bold", size=16), aspect.ratio = 1) +
+  scale_color_manual(values=c( "#919494", "#7CAE00"))+
+  facet_grid(cols = vars(condition))
+
+annotate_figure(ggarrange(p20, p21, labels="AUTO", nrow=2, ncol=1), text_grob("DM Tiles", face = "bold", size=16))
+
+```
+
+#### Include weighting by coverage
+Use weighted methylation differences for WGBS data
+```{r Scatterplot_coverage_weighted_raw_data_and_combination_in_quantile_normalisation, fig.dim=c(10, 10)}
+data_for_scatterplot <- data_for_scatterplot %>% tidyr::unite(tiles, seqnames, start, end, group, sep = ".")
+
+diff_meth_tiles <- data_for_scatterplot$tiles
+
+diff.meth.y.weighted <- data_for_scatterplot %>% dplyr::select(tiles, meth.diff.y)
+
+overlap_DM_data_normalised_mean_diff <- overlap_DM_data_normalised_mean_diff %>%
+  tidyr::unite(tiles, chrom, start, end, condition, sep = ".") %>%
+  left_join(diff.meth.y.weighted, by = "tiles") %>%
+  tidyr::separate(tiles, into = c("chrom", "start", "end", "condition"), sep = "\\.")
+
+overlap_DM_data_normalised_mean_diff <- overlap_DM_data_normalised_mean_diff %>% 
+  mutate(threshold_25_y_weighted= case_when((((25 <= meth.diff.targeted) & (25 <= meth.diff.y))  | (((meth.diff.targeted <=-25) & (meth.diff.y <=-25))) ) ~ "|25%|", TRUE ~ "not in range"))
+
+
+p22 <- overlap_DM_data_normalised_mean_diff %>% ggplot(aes(x = meth.diff.targeted, y = meth.diff.y, colour=threshold_25_y_weighted)) +
+  geom_point(shape = 16, size=2, alpha=0.6) +  
+  geom_vline(xintercept = c(-25, 25), linetype="dotted")+
+  geom_hline(yintercept = c(-25, 25), linetype="dotted")+
+  ylab("Weighted Mean Methylation \nDifference WGBS") +
+  xlab("Mean Methylation Difference \nTargeted Sequencing") +
+  labs(title = "Quantile Normalised Data", colour="Threshold") +
+  stat_cor(method="pearson")+
+  ylim(-100, 100) +
+  xlim(-100, 100) +
+  theme(plot.title = element_text(hjust = 0.5, face="bold", size=16), aspect.ratio = 1) +
+  scale_color_manual(values=c("#919494", "#7CAE00"))+
+  facet_grid(cols = vars(condition))
+
+annotate_figure(ggarrange(p20, p22, labels="AUTO", nrow=2, ncol=1), text_grob("DM Tiles", face = "bold", size=16))
+
+```
+
+#### From targeted sequencing, what percentage lies above or below +-25%?
+```{r Calculation_percentage_above/below_+-25%_targeted_seq}
+data_for_scatterplot <- data_for_scatterplot %>% separate(tiles, into = c("seqnames", "start", "end", "group"), sep = "\\.")
+
+
+raw_validated <- data_for_scatterplot %>%
+  group_by(group) %>%
+  dplyr::count(meth.diff.x <=-25 | meth.diff.x >=25) %>% 
+  dplyr::rename(threshold_25=2) %>% 
+  pivot_wider(names_from=threshold_25, values_from=n) %>%
+  dplyr::rename(Validated=3, Not_Validated=2) %>%
+  mutate(percentage=(Validated/(Not_Validated+Validated)*100))
+
+print(raw_validated)
+
+norm_validated <- overlap_DM_data_normalised_mean_diff %>%
+  group_by(condition) %>%
+  dplyr::count(meth.diff.targeted <=-25 | meth.diff.targeted >=25) %>% 
+  dplyr::rename(threshold_25=2) %>% 
+  pivot_wider(names_from=threshold_25, values_from=n) %>%
+  dplyr::rename(Validated=3, Not_Validated=2) %>%
+  mutate(percentage=(Validated/(Not_Validated+Validated)*100))
+
+print(norm_validated)
+```
+
+#### Distribution of differentially methylated tiles
+```{r Boxplots_DM_Tiles_Quantile_Normalisation, fig.dim=c(10,5)}
+p23 <- overlap_DM_data_normalised_mean_diff %>%
+  ggplot(aes(x = condition, y = meth.diff.targeted, fill = condition)) +
+  geom_boxplot() +
+  ylab("Mean Methylation Difference [%]") +
+  xlab("ACS Type") +
+  labs(title = "Targeted Sequencing") +
+  scale_fill_discrete(name = "ACS Type") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold")) +
+  ylim(-100, 80)
+
+p24 <- overlap_DM_data_normalised_mean_diff %>%
+  ggplot(aes(x = condition, y = meth.diff.WGBS, fill = condition)) +
+  geom_boxplot() +
+  ylab("Mean Methylation Difference [%]") +
+  xlab("ACS Type") +
+  labs(title = "WGBS") +
+  scale_fill_discrete(name = "ACS Type") +
+  ylim(-100, 80) +
+  theme(plot.title = element_text(hjust = 0.5, face="bold"))
+
+p25 <- overlap_DM_data_normalised_mean_diff %>%
+  ggplot(aes(x = condition, y = meth.diff.y, fill = condition)) +
+  geom_boxplot() +
+  ylab("Weighted Mean Methylation Difference [%]") +
+  xlab("ACS Type") +
+  labs(title = "Coverage Weighted \nWGBS") +
+  scale_fill_discrete(name = "ACS Type") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold")) +
+  ylim(-100, 80)
+
+annotate_figure(ggarrange(p23, p24, p25, nrow=1, ncol=3, labels="AUTO", common.legend = TRUE, legend="right"), text_grob("Quantile Normalised Data \nDM Tiles", face = "bold", size=16))
+
+```
+
+#### Distribution from all common Tiles
+```{r Boxplots_Quantile_Normalisation, fig.dim=c(10,5)}
+p26 <- overlap_normalised_mean_diff %>% ggplot(aes(x = condition, y = meth.diff.targeted, fill = condition)) +
+  geom_boxplot() +
+  ylab("Mean Methylation Difference [%]") +
+  xlab("ACS Type") +
+  labs(title = "Targeted Sequencing") +
+  scale_fill_discrete(name = "ACS Type") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold")) +
+  ylim(-100, 100)
+
+p27 <- overlap_normalised_mean_diff %>% ggplot(aes(x = condition, y = meth.diff.WGBS, fill = condition)) +
+  geom_boxplot() +
+  ylab("Mean Methylation Difference [%]") +
+  xlab("ACS Type") +
+  labs(title = "WGBS") +
+  scale_fill_discrete(name = "ACS Type") +
+  ylim(-100, 100) +
+  theme(plot.title = element_text(hjust = 0.5, face="bold") )
+
+annotate_figure(ggarrange(p26, p27, nrow=1, ncol=2, labels="AUTO", common.legend = TRUE, legend="right"), text_grob("Quantile Normalised Data \nAll Common Tiles", face = "bold", size=16))
+
+```
+
+#### Use PCA per condition on quantile normalised patient samples to depict differences between targeted seq and WGBS 
+```{r PCA_Quantile_Normalisation_All_Common_Tiles, fig.dim=c(10,10)}
+overlap_normalised_pca <- overlap_normalised %>% 
+  group_by(condition)
+overlap_normalised_pca <- group_split(overlap_normalised_pca)
+names(overlap_normalised_pca) <- c("Control", "NSTEMI", "STEMI", "UA")
+
+overlap_normalised_pca <- overlap_normalised_pca %>%
+  map(~ dplyr::select(., tiles, perc_meth, sample_ids, seq_method) %>%
+    pivot_wider(names_from = tiles, values_from = perc_meth))%>%
+  map2(names(.), ~ autoplot(prcomp(dplyr::select(.x, starts_with("chr"))), data = .x, colour = "seq_method") +
+    labs(title = .y, colour="Sequencing method") +
+    theme(plot.title = element_text(hjust = 0.5, face="bold"), , aspect.ratio = 1))
+
+annotate_figure(ggarrange(plotlist = overlap_normalised_pca, nrow=2, ncol=2, labels="AUTO", common.legend = TRUE, legend="right"), text_grob("Quantile Normalised Data \nAll Common Tiles", face = "bold", size=16))
+```
+
+--> the seq bias is still visible even though quantile normalisation
+
+### ComBat Adjust with Quantile Normalisation
+#### Log transformation of raw data
+```{r Log_transformation_of_raw_data}
+log_fun <- function(observed) {
+  result <- (log((observed + 1) / ((100 - observed) + 1)))
+}
+
+overlap_log <- overlap_tiles_validation_WGBS %>%
+  dplyr::select_if(is.numeric) %>%
+  mutate_all(list(log = ~ log_fun(.))) %>%
+  inner_join(overlap_tiles_validation_WGBS) %>%
+  dplyr::select(-c(1:40)) %>%
+  relocate("tiles") %>%
+  pivot_longer(-tiles, names_to = "sample_ids", values_to = "log_transf_perc_meth") %>%
+  mutate(across("sample_ids", str_replace, "_log", "")) %>%
+  left_join(metadata %>% dplyr::select(sample_ids, condition, seq_method), by = "sample_ids")
+```
+
+#### PCA from raw data all diseases in log space all common tiles
+```{r PCA_raw_data_log_Common_Tiles}
+
+# for all tiles
+overlap_log_pca <- overlap_log %>%
+  dplyr::select(tiles, log_transf_perc_meth, sample_ids) %>%
+  pivot_wider(names_from = tiles, values_from = log_transf_perc_meth) %>%
+  left_join(metadata %>%
+    dplyr::select(sample_ids, seq_method, condition), by = "sample_ids")
+
+# Plot PCAs for all tiles
+p32 <- autoplot(prcomp(overlap_log_pca %>% 
+                         dplyr::select(starts_with("chr"))), data = overlap_log_pca, colour = "seq_method") +
+  labs(colour = "Method") +
+  #geom_text(size = 2, aes(label = sample_ids, 
+                        #  colour = seq_method), 
+      #      check_overlap = TRUE, 
+       #     nudge_y = 0.02) +
+  scale_colour_manual(values = c("darkorchid4", "darkturquoise")) +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5, 
+                                  face = "bold", 
+                                  size = 20), 
+        aspect.ratio = 1, 
+        legend.position = "none",
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(colour = NA),
+        plot.background = element_rect(colour = NA),
+        strip.background=element_rect(colour="#f0f0f0",fill="#f0f0f0"),
+        strip.text = element_text(face="bold"),
+        axis.line.x = element_line(colour="black"),
+        axis.line.y = element_line(colour="black"),
+        panel.border = element_rect(colour = NA))
+
+p33 <- autoplot(prcomp(overlap_log_pca %>% dplyr::select(starts_with("chr"))), data = overlap_log_pca, colour = "condition") +
+  labs(colour = "Condition") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), aspect.ratio = 1)
+
+p53 <- autoplot(prcomp(overlap_log_pca %>% dplyr::select(starts_with("chr"))), data = overlap_log_pca, colour = "condition", shape = "seq_method") +
+  labs(title = "Raw Data Log Space \nAll Common Tiles", colour = "Condition", shape = "Sequencing method") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 16), aspect.ratio = 1)
+
+annotate_figure(ggarrange(p32, p33, nrow = 1, ncol = 2, labels = "AUTO"), text_grob("Raw Data Log Space \nAll Common Tiles", face = "bold", size = 16))
+p53
+
+
+```
+
+#### PCAs from raw data seperate diseases in log space common tiles
+```{r PCA_Raw_Data_log_space_common_tiles, fig.dim=c(10,10)}
+overlap_grouped_log <- overlap_log %>% 
+  group_by(condition) %>% 
+  group_split()
+names(overlap_grouped_log) <- c("Control", "NSTEMI", "STEMI", "UA")
+
+overlap_grouped_log_pca <- overlap_grouped_log %>%
+  lapply(FUN = function(x) {
+    x %>%
+      dplyr::select(tiles, log_transf_perc_meth, sample_ids) %>%
+      pivot_wider(names_from = tiles, values_from = log_transf_perc_meth) %>%
+      left_join(metadata %>% dplyr::select(sample_ids, seq_method, condition), by = "sample_ids")
+  })
+
+# Plot
+overlap_grouped_log_pca_plot <- overlap_grouped_log_pca %>%
+  map2(
+    names(.),
+    ~ autoplot(prcomp(dplyr::select(.x, starts_with("chr"))), data = .x, colour = "seq_method") +
+      labs(title = .y, colour="Sequencing \nmethod") +
+      theme(plot.title = element_text(hjust = 0.5, face="bold"), aspect.ratio = 1)
+  )
+
+annotate_figure(ggarrange(plotlist =overlap_grouped_log_pca_plot , nrow=2, ncol=2, labels="AUTO", common.legend = TRUE, legend="right"), text_grob("Raw Data Log Space \nAll Common Tiles", face = "bold", size=16))
+```
+
+#### PCAs from raw data seperate diseases in log space DM tiles
+```{r PCA_raw_data_log_space_DM_tiles, fig.dim=c(10,10)}
+overlap_DM_log <- overlap_log %>%
+  tidyr::unite(tiles, tiles, condition, sep = ".") %>%
+  filter(tiles %in% c(diff_meth_tiles)) %>%
+  tidyr::separate(tiles, into = c("chrom", "start", "end", "condition"), sep = "\\.") %>%
+  tidyr::unite(tiles, chrom, start, end, sep = ".")
+
+overlap_DM_grouped_log_pca <- overlap_DM_log %>% 
+  group_by(condition) %>% 
+  group_split()
+
+names(overlap_DM_grouped_log_pca) <- c("NSTEMI", "STEMI", "UA")
+
+overlap_DM_grouped_log_pca <- overlap_DM_grouped_log_pca %>%
+  lapply(FUN = function(x) {
+    x %>%
+      dplyr::select(tiles, log_transf_perc_meth, sample_ids) %>%
+      pivot_wider(names_from = tiles, values_from = log_transf_perc_meth) %>%
+      left_join(metadata %>% dplyr::select(sample_ids, seq_method, condition), by = "sample_ids")
+  })
+
+# Plot
+overlap_DM_grouped_log_pca_plot <- overlap_DM_grouped_log_pca %>%
+  map2(
+    names(.),
+    ~ autoplot(prcomp(dplyr::select(.x, starts_with("chr"))), data = .x, colour = "seq_method") +
+      labs(title = .y, colour="Sequencing \nmethod") +
+      theme(plot.title = element_text(hjust = 0.5, face="bold"), aspect.ratio = 1)
+  )
+
+annotate_figure(ggarrange(plotlist =overlap_DM_grouped_log_pca_plot , nrow=2, ncol=2, labels="AUTO", common.legend = TRUE, legend="right"), text_grob("Raw Data Log Space \nDM Tiles", face = "bold", size=16))
+```
+
+#### Calculate quantile normalised and combated data per condition
+```{r Perform_Quantile_Normalisation_and_Combat_Function, results='hide', message=FALSE}
+# Perform quantile normalisation 
+# Seperate targeted and WGBS data into two tibbles
+overlap_grouped_log_targeted <- overlap_grouped_log %>% 
+  map(~ dplyr::filter(., seq_method=='targeted')%>% 
+        pivot_wider(names_from = sample_ids, values_from = log_transf_perc_meth) )
+
+overlap_grouped_log_WGBS <- overlap_grouped_log %>% 
+  map(~ dplyr::filter(., seq_method=='WGBS')%>% 
+        pivot_wider(names_from = sample_ids, values_from = log_transf_perc_meth) )
+
+overlap_grouped_log_WGBS_distribution <- overlap_grouped_log_WGBS %>% 
+  map(~ c(t(dplyr::select(., -c("tiles", "condition", "seq_method")))))
+
+#normalise and set column and rownames
+overlap_grouped_log_targeted_normalised <- overlap_grouped_log_targeted %>% 
+  map2(overlap_grouped_log_WGBS_distribution, ~normalize.quantiles.use.target(as.matrix(dplyr::select(.x, -c("tiles", "condition", "seq_method"))), .y, copy=TRUE) %>% 
+         as_tibble() %>% 
+         set_names(colnames(dplyr::select(.x, -c("tiles", "condition", "seq_method")))) %>% 
+         add_column(tiles=.x[["tiles"]], .before=0))
+
+#Join targeted and WGBS dataframes
+overlap_grouped_log_normalised <- overlap_grouped_log_targeted_normalised %>% 
+  map2(overlap_grouped_log_WGBS, ~.x %>% 
+         full_join(.y[,-c(2:3)], by="tiles") %>% 
+         column_to_rownames("tiles") %>% 
+         as.matrix() )
+
+
+batch <- metadata %>%  
+  mutate(seq_method_binary = case_when(seq_method=="WGBS" ~ 0, seq_method=="targeted" ~ 1)) %>% 
+  dplyr::select(sample_ids, seq_method_binary) %>%  deframe()
+
+#Run combat function on values
+overlap_grouped_log_normalised_combat<- overlap_grouped_log_normalised %>% map(~ sva::ComBat(dat=., batch=batch[colnames(.)])%>% 
+                                                       as_tibble(rownames = "tiles") %>% 
+                                                       pivot_longer(-c(tiles), names_to="sample_ids", values_to="log_transf_perc_meth" ) %>%    
+                                                                            left_join(metadata, by="sample_ids") %>%    
+                                                                            mutate(treatment=as.factor(treatment)))
+```
+
+#### PCAs on log transformed, quantile normalised and combat data seperate condition common tiles
+```{r PCA_on_log_transformed_quantile_normalised_and_combat_transformed_data, fig.dim=c(10,10)}
+# Plot PCAs per condition
+overlap_grouped_log_normalised_combat_pca <- overlap_grouped_log_normalised_combat %>%
+  map2(names(.), ~ dplyr::select(.x, tiles, log_transf_perc_meth, sample_ids, seq_method) %>%
+    pivot_wider(names_from = tiles, values_from = log_transf_perc_meth) %>% 
+    add_column(condition=.y) )
+
+
+overlap_grouped_log_normalised_combat_plot_per_disease<- overlap_grouped_log_normalised_combat_pca %>%
+  map2(names(.), ~ autoplot(prcomp(dplyr::select(.x, starts_with("chr"))), data = .x, colour = "seq_method") +
+    labs(title = .y, colour="Sequencing \nmethod") +
+    theme(plot.title = element_text(hjust = 0.5, face="bold"), aspect.ratio = 1))
+
+annotate_figure(ggarrange(plotlist =overlap_grouped_log_normalised_combat_plot_per_disease , nrow=2, ncol=2, labels="AUTO", common.legend = TRUE, legend="right"), text_grob("Log Transformed, Quantile Normalised and ComBat\nDM Tiles", face = "bold", size=16))
+
+```
+
+#### PCAs on log transformed, quantile normalised and combat data all diseases common tiles
+```{r}
+overlap_grouped_log_normalised_combat_plot_all_diseases <- overlap_grouped_log_normalised_combat %>%
+  map(~ dplyr::select(., tiles, log_transf_perc_meth, sample_ids, seq_method) %>%
+    pivot_wider(names_from = tiles, values_from = log_transf_perc_meth)) %>%
+  bind_rows() %>%
+  left_join(metadata, by = "sample_ids")
+
+p34 <- overlap_grouped_log_normalised_combat_plot_all_diseases %>%
+  autoplot(prcomp(dplyr::select(., starts_with("chr"))), data = ., colour = "condition") +
+  labs(colour="Condition") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), aspect.ratio = 1)
+
+p35 <- overlap_grouped_log_normalised_combat_plot_all_diseases %>%
+  autoplot(prcomp(dplyr::select(., starts_with("chr"))), data = ., colour = "seq_method.x") +
+  labs(colour="Method") +
+ # geom_text(size=2, aes(label= sample_ids, colour=seq_method.x), check_overlap = TRUE, nudge_y = 0.02) +
+  scale_colour_manual(values = c("darkorchid4", "darkturquoise"))+
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5, face="bold", size=20), 
+        aspect.ratio = 1, 
+        legend.position="none")+
+  scale_y_continuous(breaks=c(-0.3, -0.2, -0.1, 0, 0.1, 0.2, 0.3))+
+  theme(plot.title = element_text(hjust = 0.5, 
+                                face = "bold", 
+                                size = 20), 
+      aspect.ratio = 1, 
+      legend.position = "none",
+      panel.grid.minor = element_blank(),
+      panel.background = element_rect(colour = NA),
+      plot.background = element_rect(colour = NA),
+      strip.background=element_rect(colour="#f0f0f0",fill="#f0f0f0"),
+      strip.text = element_text(face="bold"),
+      axis.line.x = element_line(colour="black"),
+      axis.line.y = element_line(colour="black"),
+      panel.border = element_rect(colour = NA))
+
+p54 <- overlap_grouped_log_normalised_combat_plot_all_diseases %>%
+  autoplot(prcomp(dplyr::select(., starts_with("chr"))), data = ., shape = "seq_method.x", colour="condition") +
+  labs(title = "Log Transformed, Quantile Normalised and ComBat\nAll Common Tiles", shape="Sequencing \nmethod", colour="Condition") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), aspect.ratio = 1)
+
+annotate_figure(ggarrange(p34, p35 , nrow=1, ncol=2, labels="AUTO"), text_grob("Log Transformed, Quantile Normalised and ComBat\nAll Common Tiles", face = "bold", size=16))
+
+p54
+```
+
+#### PCAs on log transformed, quantile normalised and combat data seperate condition DM tiles
+```{r PCA_on_log_transformed_quantile_normalised_and_combat_applied_data_DM_Tiles, fig.dim=c(10,10)}
+# Perform PCA per condition on DM tiles
+overlap_DM_grouped_log_normalised_combat <- overlap_grouped_log_normalised_combat %>% map(~ tidyr::unite(., tiles, tiles, condition, sep = ".") %>%
+  dplyr::filter(tiles %in% c(diff_meth_tiles)) %>%
+  tidyr::separate(tiles, into = c("chrom", "start", "end", "condition"), sep = "\\.") %>%
+  tidyr::unite(tiles, chrom, start, end, sep = "."))
+
+overlap_DM_grouped_log_normalised_combat <- overlap_DM_grouped_log_normalised_combat[2:4]
+
+overlap_DM_grouped_log_normalised_combat_pca <- overlap_DM_grouped_log_normalised_combat %>%
+  map(~ dplyr::select(., tiles, log_transf_perc_meth, sample_ids, seq_method, condition) %>%
+    pivot_wider(names_from = tiles, values_from = log_transf_perc_meth))
+
+overlap_DM_grouped_log_normalised_combat_plot_seperate_diseases <- overlap_DM_grouped_log_normalised_combat_pca %>%
+  map2(names(.), ~ autoplot(prcomp(dplyr::select(.x, starts_with("chr"))), data = .x, colour = "seq_method") +
+    labs(title = .y,  colour="Sequencing \nmethod") +
+    theme(plot.title = element_text(hjust = 0.5, face="bold"), aspect.ratio = 1))
+
+annotate_figure(ggarrange(plotlist = overlap_DM_grouped_log_normalised_combat_plot_seperate_diseases , nrow=2, ncol=2, labels="AUTO", common.legend = TRUE, legend="right"), text_grob("Log Transformed, Quantile Normalised and ComBat\nDM Tiles", face = "bold", size=16))
+
+```
+
+#### Calculate log fold change for quantile normalised and combat transformed data scatterplot
+```{r Calculation_log_fold_change_for_quantile_normalised_and_combat_transformed_data_scatterplot, fig.dim=c(10,5)}
+calc_log_fold_change <- function(log_dataframe) {
+  log_dataframe %>%
+    group_by(tiles, seq_method, condition) %>%
+    summarise_at(vars(log_transf_perc_meth), list(name = mean)) %>%
+    dplyr::rename(mean = "name") %>%
+    pivot_wider(values_from = mean, names_from = condition) %>%
+    mutate(
+      meth.diff_STEMI = STEMI - Control,
+      meth.diff_NSTEMI = NSTEMI - Control,
+      meth.diff_UA = UA - Control
+    ) %>%
+    dplyr::select(-c(Control, NSTEMI, STEMI, UA)) %>%
+    dplyr::rename(STEMI = "meth.diff_STEMI", NSTEMI = "meth.diff_NSTEMI", UA = "meth.diff_UA") %>%
+    pivot_longer(-c(tiles, seq_method),
+      names_to = "condition",
+      values_to = "log_fold_change"
+    ) %>%
+    pivot_wider(names_from = "seq_method", values_from = "log_fold_change") %>%
+    dplyr::rename(log_fold_change_WGBS = "WGBS", log_fold_change_targeted = "targeted")
+}
+
+overlap_log_normalised_combat <- overlap_grouped_log_normalised_combat %>%
+  bind_rows() %>%
+  dplyr::select(-c(treatment_descr, treatment))
+
+overlap_grouped_log_normalised_combat_log_fold_change <- overlap_grouped_log_normalised_combat %>%
+  bind_rows() %>%
+  dplyr::select(-c(treatment_descr, treatment)) %>%
+  calc_log_fold_change()
+
+data_for_scatterplot <- data_for_scatterplot %>%
+  tidyr::unite(tiles, seqnames, start, end, group, sep = ".")
+
+overlap_DM_grouped_log_normalised_combat_log_fold_change <- overlap_grouped_log_normalised_combat_log_fold_change %>%
+  tidyr::unite(tiles, tiles, condition, sep = ".") %>%
+  dplyr::filter(tiles %in% c(data_for_scatterplot$tiles)) %>%
+  tidyr::separate(tiles, into = c("chrom", "start", "end", "condition"), sep = "\\.")
+
+data_for_scatterplot <- data_for_scatterplot %>%
+  tidyr::separate(tiles, into = c("seqnames", "start", "end", "group"), sep = "\\.")
+
+# Plot
+p39 <- overlap_DM_grouped_log_normalised_combat_log_fold_change %>% ggplot(aes(x = log_fold_change_targeted, y = log_fold_change_WGBS)) +
+  geom_point(colour = "#7CAE00", shape = 16, size=2, alpha=0.6) +
+  ylab("log fold change WGBS") +
+  xlab("log fold change Targeted Sequencing") +
+  ylim(-5, 5) +
+  labs(title = "Quantile Normalisation and ComBat") +
+  stat_cor(method="pearson")+
+  theme(plot.title = element_text(hjust = 0.5,  face="bold"), aspect.ratio = 1) +
+  facet_grid(cols = vars(condition))
+
+annotate_figure(ggarrange(p39 , nrow=1, ncol=1), text_grob("DM Tiles", face = "bold", size=16))
+```
+
+### Backtransformation of Quantile Normalised and Combat Data
+```{r Calculate_log_backtransformation}
+e_fun <- function(observed) {
+  result <- ((exp(observed) * 100) / (1 + exp(observed)))
+}
+
+overlap_log_normalised_combat <- overlap_log_normalised_combat %>%
+  dplyr::select(-c("seq_method", "condition")) %>%
+  pivot_wider(names_from = sample_ids, values_from = log_transf_perc_meth)
+
+overlap_log_normalised_combat_no_log <- overlap_log_normalised_combat %>%
+  dplyr::select_if(is.numeric) %>%
+  mutate_all(list(perc_meth = ~ e_fun(.))) %>%
+  inner_join(overlap_log_normalised_combat) %>%
+  dplyr::select(-c(1:40)) %>%
+  relocate("tiles") %>%
+  pivot_longer(-tiles, names_to = "sample_ids", values_to = "perc_meth") %>%
+  mutate(across("sample_ids", str_replace, "_perc_meth", "")) %>%
+  left_join(metadata %>% dplyr::select(sample_ids, condition, seq_method), by = "sample_ids")
+```
+
+#### Plot %Methylation per condition group
+```{r Box_and_violinplots_for_backtransformed_normalised_and_combat_transformed_data, fig.dim=c(10,10)}
+p40 <- overlap_log_normalised_combat_no_log %>% ggplot(aes(x = condition, y = perc_meth, fill = seq_method)) +
+  geom_boxplot() +
+  ylab("Methylation [%]") +
+  xlab("ACS Type") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold"))
+
+p41 <- overlap_log_normalised_combat_no_log %>% ggplot(aes(x = condition, y = perc_meth, fill = seq_method)) +
+  geom_violin() +
+  ylab("Methylation [%]") +
+  xlab("ACS Type") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold"))
+
+p42 <- overlap_log_normalised_combat_no_log %>% ggplot(aes(x = condition, y = perc_meth)) +
+  geom_violin(aes(fill = seq_method)) +
+  geom_boxplot(aes(fill = seq_method), width = 0.05) +
+  ylab("Methylation [%]") +
+  xlab("ACS Type") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold")) +
+  facet_grid(seq_method ~ .)
+
+p43 <- overlap_log_normalised_combat_no_log %>% ggplot(aes(x = condition, y = perc_meth)) +
+  geom_violin(fill = "#7C7CFF") +
+  ylab("Methylation [%]") +
+  xlab("ACS Type") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold"))
+
+annotate_figure(ggarrange(p40, p41, p42, p43 , nrow=2, ncol=2, labels="AUTO", common.legend = TRUE, legend="right"), text_grob("Log-Backtransformed, Quantile Normalised and ComBat\nAll Common Tiles", face = "bold", size=16))
+
+```
+
+#### Plot %Methylation per sample
+```{r Per_Sample_Methylation_Violinplots}
+p44 <- overlap_log_normalised_combat_no_log %>%
+  filter(seq_method == "WGBS") %>%
+  ggplot(aes(x = sample_ids, y = perc_meth)) +
+  geom_violin(fill = "#F8766D") +
+  geom_boxplot(width = 0.05) +
+  ylab("Methylation [%]") +
+  xlab("Sample") +
+  labs(title = "WGBS") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold"))
+
+p45 <- overlap_log_normalised_combat_no_log %>%
+  filter(seq_method == "targeted") %>%
+  ggplot(aes(x = sample_ids, y = perc_meth)) +
+  geom_violin(fill = "#00BFC4") +
+  geom_boxplot(width = 0.05) +
+  ylab("Methylation [%]") +
+  xlab("Sample") +
+  labs(title = "Targeted Sequencing") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold"))
+
+p46 <- overlap_log_normalised_combat_no_log %>% ggplot(aes(x = sample_ids, y = perc_meth, fill = seq_method)) +
+  geom_violin() +
+  geom_boxplot(width = 0.05) +
+  ylab("Methylation [%]") +
+  xlab("Sample") +
+  labs(title = "Log-Backtransformed, Quantile Normalised and ComBat\nAll Common Tiles") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold"), axis.text.x = element_text(angle = 45, vjust = 0.8, hjust = 1))
+
+annotate_figure(ggarrange(p44, p45, nrow=2, ncol=1, labels="AUTO", common.legend = TRUE, legend="right"), text_grob("Log-Backtransformed, Quantile Normalised and ComBat\nAll Common Tiles", face = "bold", size=16))
+p46
+```
+
+```{r Make_PCAs_Backtransformed_Quantile_Normalised_and_ComBat_All_Common_Tiles}
+overlap_log_normalised_combat_no_log_plot <- overlap_log_normalised_combat_no_log %>%
+    pivot_wider(names_from = tiles, values_from = perc_meth)
+
+p56 <- overlap_log_normalised_combat_no_log_plot %>%
+  autoplot(prcomp(dplyr::select(., starts_with("chr"))), data = ., colour = "condition") +
+  labs(colour="Condition") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), aspect.ratio = 1)
+
+p57 <- overlap_log_normalised_combat_no_log_plot %>%
+  autoplot(prcomp(dplyr::select(., starts_with("chr"))), data = ., colour = "seq_method") +
+  labs(colour="Sequencing \nmethod") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), aspect.ratio = 1)
+
+p58 <- overlap_log_normalised_combat_no_log_plot %>%
+  autoplot(prcomp(dplyr::select(., starts_with("chr"))), data = ., shape = "seq_method", colour="condition") +
+  labs(title = "Backtransformed, Quantile Normalised and ComBat\nAll Common Tiles", shape="Sequencing \nmethod", colour="Condition") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), aspect.ratio = 1)
+
+annotate_figure(ggarrange(p56, p57 , nrow=1, ncol=2, labels="AUTO"), text_grob("Backtransformed, Quantile Normalised and ComBat\nAll Common Tiles", face = "bold", size=16))
+
+p58
+```
+
+```{r Make_PCA_for_Backtransformed_Quantile_Normalised_and_ComBat_DM_Tiles, fig.dim=c(10,10)}
+# Perform PCA per condition on DM tiles
+overlap_grouped_log_normalised_combat_log_fold_change_no_log <- overlap_log_normalised_combat_no_log %>% 
+  group_by(condition) %>% 
+  group_split()
+
+overlap_grouped_DM_log_normalised_combat_log_fold_change_no_log <- overlap_grouped_log_normalised_combat_log_fold_change_no_log %>% 
+  map(~ tidyr::unite(., tiles, tiles, condition, sep = ".") %>%
+  dplyr::filter(tiles %in% c(diff_meth_tiles)) %>%
+  tidyr::separate(tiles, into = c("chrom", "start", "end", "condition"), sep = "\\.") %>%
+  tidyr::unite(tiles, chrom, start, end, sep = "."))
+
+overlap_grouped_DM_log_normalised_combat_log_fold_change_no_log <- overlap_grouped_DM_log_normalised_combat_log_fold_change_no_log[2:4]
+
+overlap_grouped_DM_log_normalised_combat_log_fold_change_no_log_pca <- overlap_grouped_DM_log_normalised_combat_log_fold_change_no_log %>%
+  map(~ dplyr::select(., tiles, perc_meth, sample_ids, seq_method, condition) %>%
+    pivot_wider(names_from = tiles, values_from = perc_meth))
+
+names(overlap_grouped_DM_log_normalised_combat_log_fold_change_no_log_pca) <- c("NSTEMI", "STEMI", "UA")
+
+overlap_grouped_DM_log_normalised_combat_log_fold_change_no_log_plot_seperate_diseases <- overlap_grouped_DM_log_normalised_combat_log_fold_change_no_log_pca %>%
+  map2(names(.), ~ autoplot(prcomp(dplyr::select(.x, starts_with("chr"))), data = .x, colour = "seq_method") +
+    labs(title = .y,  colour="Sequencing \nmethod") +
+    theme(plot.title = element_text(hjust = 0.5, face="bold"), aspect.ratio = 1))
+
+annotate_figure(ggarrange(plotlist = overlap_grouped_DM_log_normalised_combat_log_fold_change_no_log_plot_seperate_diseases , nrow=2, ncol=2, labels="AUTO", common.legend = TRUE, legend="right"), text_grob("Backtransformed, Quantile Normalised and ComBat\nDM Tiles", face = "bold", size=16))
+```
+
+```{r Make_PCA_for_Backtransformed_Quantile_Normalised_and_ComBat_unique_DM_Tiles, fig.dim=c(10,10)}
+
+DM_tiles_NSTEMI <- overlap_grouped_DM_log_normalised_combat_log_fold_change_no_log_pca[["NSTEMI"]] %>% dplyr::select(starts_with("chr")) %>% colnames()
+DM_tiles_STEMI <- overlap_grouped_DM_log_normalised_combat_log_fold_change_no_log_pca[["STEMI"]] %>% dplyr::select(starts_with("chr")) %>% colnames()
+DM_tiles_UA <- overlap_grouped_DM_log_normalised_combat_log_fold_change_no_log_pca[["UA"]] %>% dplyr::select(starts_with("chr")) %>% colnames()
+
+DM_tiles_NSTEMI_unique <- setdiff(DM_tiles_NSTEMI, DM_tiles_STEMI)
+DM_tiles_NSTEMI_unique <- setdiff(DM_tiles_NSTEMI_unique, DM_tiles_UA)
+
+
+DM_tiles_STEMI_unique <- setdiff(DM_tiles_STEMI, DM_tiles_NSTEMI)
+DM_tiles_STEMI_unique <- setdiff(DM_tiles_STEMI_unique, DM_tiles_UA)
+
+DM_tiles_UA_unique <- setdiff(DM_tiles_UA, DM_tiles_NSTEMI)
+DM_tiles_UA_unique <- setdiff(DM_tiles_UA_unique, DM_tiles_STEMI)
+
+length(DM_tiles_NSTEMI_unique) #187
+length(DM_tiles_STEMI_unique) #431
+length(DM_tiles_UA_unique) #473
+
+overlap_grouped_unique_DM_log_normalised_combat_log_fold_change_no_log_pca <- list()
+
+overlap_grouped_unique_DM_log_normalised_combat_log_fold_change_no_log_pca[["NSTEMI"]] <- overlap_grouped_DM_log_normalised_combat_log_fold_change_no_log_pca[["NSTEMI"]] %>% 
+  dplyr::select(sample_ids, seq_method, condition, DM_tiles_NSTEMI_unique)
+
+overlap_grouped_unique_DM_log_normalised_combat_log_fold_change_no_log_pca[["STEMI"]] <- overlap_grouped_DM_log_normalised_combat_log_fold_change_no_log_pca[["STEMI"]] %>% 
+  dplyr::select(sample_ids, seq_method, condition, DM_tiles_STEMI_unique)
+
+overlap_grouped_unique_DM_log_normalised_combat_log_fold_change_no_log_pca[["UA"]] <- overlap_grouped_DM_log_normalised_combat_log_fold_change_no_log_pca[["UA"]] %>% 
+  dplyr::select(sample_ids, seq_method, condition, DM_tiles_UA_unique)
+
+
+overlap_grouped_unique_DM_log_normalised_combat_log_fold_change_no_log_plot_seperate_diseases <- overlap_grouped_unique_DM_log_normalised_combat_log_fold_change_no_log_pca %>%
+  map2(names(.), ~ autoplot(prcomp(dplyr::select(.x, starts_with("chr"))), data = .x, colour = "seq_method") +
+    labs(title = .y,  colour="Sequencing \nmethod") +
+    theme(plot.title = element_text(hjust = 0.5, face="bold"), aspect.ratio = 1))
+
+annotate_figure(ggarrange(plotlist = overlap_grouped_unique_DM_log_normalised_combat_log_fold_change_no_log_plot_seperate_diseases , nrow=2, ncol=2, labels="AUTO", common.legend = TRUE, legend="right"), text_grob("Backtransformed, Quantile Normalised and ComBat\nUnique DM Tiles", face = "bold", size=16))
+```
+
+```{r Make_PCA_for_Backtransformed_Quantile_Normalised_and_ComBat_DM_Tiles_regardles_of_percentage, fig.dim=c(10,10)}
+unique_DM_tiles <- c(unlist(DM_tiles_NSTEMI_unique), unlist(DM_tiles_STEMI_unique), unlist(DM_tiles_UA_unique))
+
+#Filter methylation values for all per disease uniquely differentially methylated tiles
+unique_DM_perc_meth <- overlap_log_normalised_combat_no_log %>% dplyr::filter(tiles %in% unique_DM_tiles)
+
+unique_DM_perc_meth_pca <- unique_DM_perc_meth %>%  
+  tidyr::pivot_wider(values_from=perc_meth, names_from=tiles)
+
+p63 <- unique_DM_perc_meth_pca %>%
+  autoplot(prcomp(dplyr::select(., starts_with("chr"))), data = ., colour = "condition") +
+  labs(colour="Condition") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), aspect.ratio = 1)
+
+p64 <- unique_DM_perc_meth_pca %>%
+  autoplot(prcomp(dplyr::select(., starts_with("chr"))), data = ., colour = "seq_method") +
+  labs(colour="Sequencing \nmethod") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), aspect.ratio = 1)
+
+p65 <- unique_DM_perc_meth_pca %>%
+  autoplot(prcomp(dplyr::select(., starts_with("chr"))), data = ., shape = "seq_method", colour="condition") +
+  labs(title = "Backtransformed, Quantile Normalised and ComBat\nAll unique DM Tiles", shape="Sequencing \nmethod", colour="Condition") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), aspect.ratio = 1)
+
+annotate_figure(ggarrange(p63, p64 , nrow=1, ncol=2, labels="AUTO"), text_grob("Backtransformed, Quantile Normalised and ComBat\nAll unique DM Tiles", face = "bold", size=16))
+
+p65
+```
+
+#### Compare difference of means per condition scatterplot and boxplot DM
+```{r Calculate_difference_of_means_scatterplot_and_boxplot, fig.dim=c(10,5)}
+calc_diff_of_means <- function(dataframe_all_samples, tiles.condition) {
+  dataframe_all_samples_mean <- dataframe_all_samples %>%
+    group_by(tiles, seq_method, condition) %>%
+    summarise_at(vars(perc_meth), list(name = mean)) %>%
+    dplyr::rename(mean = "name")
+
+  dataframe_all_samples_mean_diff <- dataframe_all_samples_mean %>%
+    pivot_wider(values_from = mean, names_from = condition) %>%
+    mutate(
+      meth.diff_STEMI = STEMI - Control,
+      meth.diff_NSTEMI = NSTEMI - Control,
+      meth.diff_UA = UA - Control
+    ) %>%
+    dplyr::select(-c(Control, NSTEMI, STEMI, UA)) %>%
+    dplyr::rename(STEMI = "meth.diff_STEMI", NSTEMI = "meth.diff_NSTEMI", UA = "meth.diff_UA") %>%
+    pivot_longer(-c(tiles, seq_method),
+      names_to = "condition",
+      values_to = "meth_diff"
+    ) %>%
+    pivot_wider(names_from = "seq_method", values_from = "meth_diff") %>%
+    dplyr::rename(meth.diff.WGBS = "WGBS", meth.diff.targeted = "targeted")
+
+  dataframe_all_samples_mean_diff_tiles <- dataframe_all_samples_mean_diff %>%
+    tidyr::unite(tiles, tiles, condition, sep = ".") %>%
+    filter(tiles %in% c(tiles.condition)) %>%
+    tidyr::separate(tiles, into = c("chrom", "start", "end", "condition"), sep = "\\.")
+}
+
+overlap_DM_log_normalised_combat_log_fold_change_no_log_mean_diff <- calc_diff_of_means(overlap_log_normalised_combat_no_log, diff_meth_tiles)
+
+#Calculate threshold for scatterplot
+overlap_DM_log_normalised_combat_log_fold_change_no_log_mean_diff <- overlap_DM_log_normalised_combat_log_fold_change_no_log_mean_diff %>% 
+  mutate(threshold_25= case_when((((25 <= meth.diff.WGBS) & (25 <= meth.diff.targeted))  | (((meth.diff.WGBS <=-25) & (meth.diff.targeted <=-25))) ) ~ "|25%|", TRUE ~ "not in range"))
+
+p47 <- overlap_DM_log_normalised_combat_log_fold_change_no_log_mean_diff %>% 
+  ggplot(aes(x = meth.diff.targeted, y = meth.diff.WGBS, colour=threshold_25)) +
+  geom_point(shape = 16, size=2, alpha=0.6) +
+    geom_vline(xintercept = c(-25, 25), linetype="dotted")+
+  geom_hline(yintercept = c(-25, 25), linetype="dotted")+
+  ylab("Mean Methylation Difference WGBS") +
+  xlab("Mean Methylation Difference Targeted Sequencing") +
+  labs(title = "Log-Backtransformed, Quantile Normalised and ComBat", colour="Threshold") +
+  stat_cor(method="pearson")+
+  ylim(-70, 70) +
+  xlim(-70, 70) +
+  theme(plot.title = element_text(hjust = 0.5, face="bold"), aspect.ratio = 1) +
+  scale_color_manual(values=c("#919494", "#7CAE00"))+
+  facet_grid(cols = vars(condition))
+
+annotate_figure(ggarrange(p47 , nrow=1, ncol=1), text_grob("DM Tiles", face = "bold", size=16))
+
+# Plot distribution of mean DM per condition boxplots
+p48 <- overlap_DM_log_normalised_combat_log_fold_change_no_log_mean_diff %>% ggplot(aes(x = condition, y = meth.diff.targeted, fill = condition)) +
+  geom_boxplot() +
+  ylab("Mean Methylation Difference [%]") +
+  xlab("ACS Type") +
+  labs(title = "Targeted Sequencing") +
+  scale_fill_discrete(name = "ACS Type") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  ylim(-100, 80)
+
+p49 <- overlap_DM_log_normalised_combat_log_fold_change_no_log_mean_diff %>% ggplot(aes(x = condition, y = meth.diff.WGBS, fill = condition)) +
+  geom_boxplot() +
+  ylab("Mean Methylation Difference [%]") +
+  xlab("ACS Type") +
+  labs(title = "WGBS") +
+  scale_fill_discrete(name = "ACS Type") +
+  ylim(-100, 80) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+annotate_figure(ggarrange(p48, p49 , nrow=1, ncol=2, labels="AUTO", common.legend = TRUE, legend="right"), text_grob("Log-Backtransformed, Quantile Normalised and ComBat\nDM Tiles", face = "bold", size=16))
+```
+```{r Inclusion_of_q_values, fig.dim=c(10,5)}
+#Add qvalue to dataframe and calculate if threshold for qvalue below 0.01
+lim=65
+
+overlap_DM_log_normalised_combat_log_fold_change_no_log_mean_diff_qvalues <- overlap_DM_log_normalised_combat_log_fold_change_no_log_mean_diff %>% 
+  tidyr::unite(tiles, chrom, start, end, condition, sep=".") %>% 
+  left_join(dplyr::select(bind_rows(methylDiff_validation), tiles, qvalue), by="tiles") %>% 
+  dplyr::rename(qvalue_targeted= qvalue) %>% 
+  left_join(dplyr::select(bind_rows(methylDiff_WGBS), tiles, qvalue), by="tiles") %>% 
+  dplyr::rename(qvalue_WGBS=qvalue) %>% 
+  tidyr::separate(tiles, into=c("chrom", "start", "end", "condition")) %>% 
+  dplyr::mutate(threshold_25_qvalue= case_when(threshold_25 =="|25%|" & qvalue_targeted <=0.01 & qvalue_WGBS <=0.01 ~ "significant", TRUE ~ "insignificant"))            
+
+p59 <- overlap_DM_log_normalised_combat_log_fold_change_no_log_mean_diff_qvalues %>% 
+  ggplot(aes(x = meth.diff.targeted, y = meth.diff.WGBS, colour=threshold_25_qvalue)) +
+  geom_point(shape = 16, alpha=0.6, size=2) +
+    geom_vline(xintercept = c(-25, 25), linetype="dotted")+
+  geom_hline(yintercept = c(-25, 25), linetype="dotted")+
+  ylab("Mean Methylation Difference WGBS") +
+  xlab("Mean Methylation Difference Targeted Sequencing") +
+  labs(title = "Log-Backtransformed, Quantile Normalised and ComBat", colour="Threshold") +
+  stat_cor(method="pearson")+
+  ylim(-lim, lim) +
+  xlim(-lim, lim) +
+  theme(plot.title = element_text(hjust = 0.5, face="bold"), aspect.ratio = 1) +
+  scale_color_manual(values=c("#919494", "#7CAE00"))+
+  facet_grid(cols = vars(condition))
+
+annotate_figure(ggarrange(p59 , nrow=1, ncol=1), text_grob("DM Tiles", face = "bold", size=16))
+
+```
+#### Union of all DM tiles
+```{r Include_only_union_of_DM_tiles}
+#Get all tiles of differential methylation regardless of percentage
+all_DM_tiles<- overlap_DM_log_normalised_combat_log_fold_change_no_log_mean_diff_qvalues %>%  
+  #filter(threshold_25 == "|25%|") %>% 
+  tidyr::unite(tiles, chrom, start, end, sep=".") %>% 
+  pull(tiles) %>% 
+  unique()
+
+#Filter methylation values for all differentially methylated tiles
+all_DM_perc_meth <- overlap_log_normalised_combat_no_log %>% dplyr::filter(tiles %in% all_DM_tiles)
+
+all_DM_perc_meth_pca <- all_DM_perc_meth %>%  
+  tidyr::pivot_wider(values_from=perc_meth, names_from=tiles)
+
+p60 <- all_DM_perc_meth_pca %>%
+  autoplot(prcomp(dplyr::select(., starts_with("chr"))), data = ., colour = "condition") +
+  labs(colour="Condition") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), aspect.ratio = 1)
+
+p61 <- all_DM_perc_meth_pca %>%
+  autoplot(prcomp(dplyr::select(., starts_with("chr"))), data = ., colour = "seq_method") +
+  labs(colour="Sequencing \nmethod") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), aspect.ratio = 1)
+
+p62 <- all_DM_perc_meth_pca %>%
+  autoplot(prcomp(dplyr::select(., starts_with("chr"))), data = ., shape = "seq_method", colour="condition") +
+  labs(title = "Backtransformed, Quantile Normalised and ComBat\nAll DM Tiles", shape="Sequencing \nmethod", colour="Condition") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), aspect.ratio = 1)
+
+annotate_figure(ggarrange(p60, p61 , nrow=1, ncol=2, labels="AUTO"), text_grob("Backtransformed, Quantile Normalised and ComBat\nAll DM Tiles", face = "bold", size=16))
+
+p62
+```
+#### DMRs between conditions
+```{r Make_PCA_from_DMR_between_disease_states}
+top_DMR_treatment <- readRDS(file = "/local/AAkalin_cardiac/Results/cardiac/RDS/top_DMR_treatment.RDS")
+
+#Filter methylation values for all differentially methylated tiles between disease
+condition_DM_perc_meth <- overlap_log_normalised_combat_no_log %>% dplyr::filter(tiles %in% top_DMR_treatment)
+
+condition_DM_perc_meth_pca <- condition_DM_perc_meth %>%  
+  tidyr::pivot_wider(values_from=perc_meth, names_from=tiles)
+
+
+p67 <- condition_DM_perc_meth_pca %>%
+  autoplot(prcomp(dplyr::select(., starts_with("chr"))), data = ., colour = "condition") +
+  labs(colour="Condition") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), aspect.ratio = 1)
+
+p68 <- condition_DM_perc_meth_pca %>%
+  autoplot(prcomp(dplyr::select(., starts_with("chr"))), data = ., colour = "seq_method") +
+  labs(colour="Sequencing \nmethod") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), aspect.ratio = 1)
+
+p69 <- condition_DM_perc_meth_pca %>%dplyr::mutate(condition = if_else(condition == "Control", "Healthy", condition)) %>%
+  autoplot(prcomp(dplyr::select(.,starts_with("chr"))), data = ., shape = "seq_method", colour="condition", size=3) +
+  #labs(title = "Backtransformed, Quantile Normalised and ComBat\nBetween Disease DM Tiles", 
+  labs(shape="Sequencing \nmethod", colour="Condition", face="bold") +
+  scale_colour_manual(values = c("#ef3b2c","#f87f01","#386cb0","#7fc97f"))+
+  theme_Publication()+
+  theme(legend.position = "right", 
+        legend.direction = "vertical", 
+        aspect.ratio = 1)+
+  scale_y_continuous(breaks=c(-0.3, -0.2, -0.1, 0, 0.1, 0.2))+
+  scale_x_continuous(breaks=c(-0.3, -0.2, -0.1, 0, 0.1, 0.2))
+
+annotate_figure(ggarrange(p67, p68 , nrow=1, ncol=2, labels="AUTO"), text_grob("Backtransformed, Quantile Normalised and ComBat\nBetween Disease DM Tiles", face = "bold", size=16))
+
+p69
+```
+
+#### Compare Validation Cohort Tiles to Discovery Cohort Tiles
+```{r Scatterplot_Discovery_vs_Validation_Cohort}
+compare_discovery_validation <- overlap_DM_log_normalised_combat_log_fold_change_no_log_mean_diff_qvalues %>% 
+  dplyr::rename(meth.diff.WGBS.validation = meth.diff.WGBS, meth.diff.targeted.validation=meth.diff.targeted) %>% 
+  dplyr::left_join(dplyr::select(data_for_scatterplot,  seqnames, start, end, group, meth.diff.y), by = c("chrom"="seqnames", "start", "end", "condition"="group")) %>% 
+  dplyr::rename(meth.diff.WGBS.raw=meth.diff.y) %>% 
+  dplyr::mutate(threshold_qvalue_directional= ifelse(qvalue_targeted < 0.01 & qvalue_WGBS < 0.01 & (meth.diff.targeted.validation >= 0 & meth.diff.WGBS.raw >= 0 | meth.diff.targeted.validation <= 0 & meth.diff.WGBS.raw <= 0), "significant", "insignificant"),
+                
+                threshold_qvalue= ifelse(qvalue_targeted < 0.01 & qvalue_WGBS < 0.01,  "significant", "insignificant"),
+                
+                threshold_25_cohort_comparison = ifelse((meth.diff.WGBS.raw >= 25 & meth.diff.targeted.validation >= 25 | meth.diff.WGBS.raw <= -25 & meth.diff.targeted.validation <= -25), "DMR validated", "DMR not validated"),
+                
+                threshold_25_qvalue_cohort_comparison = case_when(threshold_25_cohort_comparison == "DMR validated" & threshold_qvalue_directional == "significant" ~ "significant and validated", 
+                                                                  threshold_25_cohort_comparison == "DMR validated" & threshold_qvalue_directional == "insignificant" ~ "insignificant", 
+                                                                  threshold_25_cohort_comparison == "DMR not validated" & threshold_qvalue_directional == "significant" ~ "significant",
+                                                                  threshold_25_cohort_comparison == "DMR not validated" & threshold_qvalue_directional == "insignificant" ~ "insignificant"),
+                
+                threshold_25_qvalue_cohort_comparison = factor(threshold_25_qvalue_cohort_comparison, levels=c("insignificant", "significant", "significant and validated")))
+
+lim=70
+p66 <- compare_discovery_validation %>% 
+  ggplot(aes(x = meth.diff.targeted.validation, y = meth.diff.WGBS.raw, colour=threshold_25_qvalue_cohort_comparison)) +
+  geom_point(shape = 16, alpha=0.6, size=1) +
+  geom_vline(xintercept = c(-25, 25), linetype="dotted")+
+  geom_hline(yintercept = c(-25, 25), linetype="dotted")+
+  ylab("\u0394 Methylation [%]\nWGBS Discovery Cohort") +
+  xlab("\u0394 Methylation [%]\nTargeted Sequencing Validation Cohort") +
+  #labs(title = "Log-Backtransformed, Quantile Normalised and ComBat", 
+  labs(colour="DMR") +
+  stat_cor(label.x =(-55) , label.y=c(-10, 0, 10), method="pearson", size=2.5)+
+  theme_Publication()+
+  ylim(-lim, lim) +
+  xlim(-lim, lim) +
+  theme(aspect.ratio = 1,
+        strip.background = element_blank(),
+        panel.grid.major = element_blank())+
+  scale_color_manual(values=c("#919494", "khaki3 ", "tan4"), guide = guide_legend(override.aes = list(size = 3.5, alpha=1) ))+
+  facet_wrap(vars(condition))
+p66
+```
+
+```{r Number_of_Validated_Tiles_Validation_Cohort}
+cohort_comparison_validation_numbers_q_value_directional <- compare_discovery_validation %>%
+  group_by(condition) %>% 
+  dplyr::count(threshold_qvalue_directional =="significant") %>% 
+  dplyr::rename(threshold_q_value_directional=2) %>% 
+  pivot_wider(names_from=threshold_q_value_directional, values_from=n) %>% 
+  dplyr::rename(Significant_DMR=3, Insignificant_DMR=2) %>% 
+  mutate(Percentage_Significant_DMR=(Significant_DMR/(Insignificant_DMR+Significant_DMR)*100), 
+         Total_Number_DMRs=sum(Significant_DMR, Insignificant_DMR)) %>% 
+  dplyr::relocate(Total_Number_DMRs, .after=condition)
+
+cohort_comparison_validation_numbers_q_value_25_cutoff <- compare_discovery_validation %>%
+  dplyr::filter(threshold_qvalue == "significant") %>% 
+  group_by(condition) %>%
+  dplyr::count(threshold_25_cohort_comparison == "DMR validated" & threshold_qvalue == "significant") %>% 
+  dplyr::rename(threshold_25=2) %>% 
+  pivot_wider(names_from=threshold_25, values_from=n) %>%
+  dplyr::rename(Significant_DMR_Validated=3, Significant_DMR_Not_Validated=2) %>%
+  mutate(Percentage_Significant_DMR_Validated=(Significant_DMR_Validated/(Significant_DMR_Not_Validated+Significant_DMR_Validated)*100), 
+         Total_Number_DMRs=sum(Significant_DMR_Not_Validated, Significant_DMR_Validated)) %>% 
+  dplyr::relocate(Total_Number_DMRs, .after=condition)
+
+cohort_comparison_validation_numbers_q_value_directional_25_cutoff <- compare_discovery_validation %>%
+  dplyr::filter(threshold_qvalue_directional == "significant") %>% 
+  group_by(condition) %>%
+  dplyr::count(threshold_25_cohort_comparison == "DMR validated" & threshold_qvalue == "significant") %>% 
+  dplyr::rename(threshold_25=2) %>% 
+  pivot_wider(names_from=threshold_25, values_from=n) %>%
+  dplyr::rename(Significant_DMR_Validated=3, Significant_DMR_Not_Validated=2) %>%
+  mutate(Percentage_Significant_DMR_Validated=(Significant_DMR_Validated/(Significant_DMR_Not_Validated+Significant_DMR_Validated)*100), 
+         Total_Number_DMRs=sum(Significant_DMR_Not_Validated, Significant_DMR_Validated)) %>% 
+  dplyr::relocate(Total_Number_DMRs, .after=condition)
+
+
+print(cohort_comparison_validation_numbers_q_value_directional)
+print(cohort_comparison_validation_numbers_q_value_25_cutoff)
+print(cohort_comparison_validation_numbers_q_value_directional_25_cutoff)
+```
+
+#### Correlate Validated DMRs to Clinical Markers
+To find out if DMR validation might be associable with clinical marker expression
+```{r Correlate_Validated_DMRs_to_Clinical Markers_normalised_perc_meth}
+#First try to use quantile and combat normalised perc_meth values:
+
+
+DMRs <- compare_discovery_validation %>% 
+  dplyr::select(chrom, start, end, condition, threshold_25_cohort_comparison) %>% 
+  tidyr::unite(DMR, chrom, start, end, sep=".") %>% 
+  group_split(threshold_25_cohort_comparison) %>% 
+  map(~pull(., DMR) %>% unique())
+
+#Join with clinical Data
+overlap_log_normalised_combat_no_log_plot_clinical_data<-overlap_log_normalised_combat_no_log_plot %>% 
+  dplyr::select(sample_ids, starts_with("chr")) %>% 
+  dplyr::inner_join(clinical_markers_ACS, by = c("sample_ids"="Sample"))
+
+#Calculate Correlation
+validation_corr_biomarkers <- overlap_log_normalised_combat_no_log_plot_clinical_data %>% 
+  dplyr::select(any_of(c(DMRs[[1]], DMRs[[2]])), "LVEF(%)", "CRP(mg/dl_<5)","TroponinThs_t1 (ng/l <14or<50)", "CK (U/l _<190)" , "CKmax(U/l_<190)" ,"CK-MB(U/l <24)","CK-MB_Max") %>% 
+  stats::cor(use = "complete.obs",method = "pearson") %>%
+  as_tibble(rownames="DMR") %>% 
+  dplyr::mutate(across(where(is.numeric), ~.^2)) %>% 
+  dplyr::select(DMR, "LVEF(%)", "CRP(mg/dl_<5)","TroponinThs_t1 (ng/l <14or<50)", "CK (U/l _<190)" , "CKmax(U/l_<190)" ,"CK-MB(U/l <24)","CK-MB_Max")
+
+#Annotate with validation status
+validation_corr_biomarkers <- validation_corr_biomarkers %>% 
+  dplyr::mutate(DMRs_validation=if_else(DMR %in% DMRs[[2]], "validated", "not validated"))
+
+validation_corr_biomarkers_long <- validation_corr_biomarkers %>%
+  dplyr::rename('CRP (mg/dl)'= "CRP(mg/dl_<5)", 
+                'TroponinT (ng/l)'="TroponinThs_t1 (ng/l <14or<50)",
+                'CK (U/l)'="CK (U/l _<190)",
+                'CK max (U/l)'="CKmax(U/l_<190)",
+                'CK-MB (U/l)'="CK-MB(U/l <24)",
+                'CK-MB max (U/l)'="CK-MB_Max") %>% 
+  tidyr::pivot_longer(-c(DMR, DMRs_validation), names_to = "biomarker", values_to="Rsquared")
+
+#Plot
+clinical_marker_correlation <- validation_corr_biomarkers_long %>% 
+  ggplot(aes(x = DMRs_validation, y = Rsquared, fill=DMRs_validation)) +
+  geom_boxplot(outlier.size=0.3) +
+  ggpubr::stat_compare_means(size=2, label.x=1.2, label.y=1.1)+  
+  labs(y=expression("R"^2), x="DMRs") +
+  ylim(0,1.25)+
+  scale_fill_manual(name= "DMRs", values=c("darkred", "darkgreen")) +
+  theme_bw()+
+  facet_wrap(vars(biomarker))+
+  theme(strip.text = element_text(size = 6), axis.text=element_text(size=6))
+
+clinical_marker_correlation
+
+# ggsave(bg ="white",
+# "/home/arathge/output/plots/ACSS_cardiac_ccfDNA/clinical_marker_correlation.tiff",
+# device = "tiff",
+# plot = clinical_marker_correlation
+# )
+```
+
+
+```{r Correlate_Validated_DMRs_to_Clinical Markers_raw_perc_meth}
+# Try also with unnormalised raw perc_meth values:
+
+#Transpose tibble
+overlap_tiles_validation_WGBS_t <- overlap_tiles_validation_WGBS %>% 
+  pivot_longer(-tiles) %>%   
+  pivot_wider(names_from = tiles, values_from = value) %>% 
+  dplyr::rename(sample_ids="name")
+
+#Join with Clinical Data
+overlap_tiles_validation_WGBS_t_clinical_data<-overlap_tiles_validation_WGBS_t %>% 
+  dplyr::select(sample_ids, starts_with("chr")) %>% 
+  dplyr::inner_join(clinical_markers_ACS, by = c("sample_ids"="Sample"))
+
+#Calculate Correlation
+validation_corr_biomarkers_raw_data <- overlap_tiles_validation_WGBS_t_clinical_data %>% 
+  dplyr::select(any_of(c(DMRs[[1]], DMRs[[2]])), "LVEF(%)", "CRP(mg/dl_<5)","TroponinThs_t1 (ng/l <14or<50)", "CK (U/l _<190)" , "CKmax(U/l_<190)" ,"CK-MB(U/l <24)","CK-MB_Max") %>% 
+  stats::cor(use = "complete.obs",method = "pearson") %>%
+  as_tibble(rownames="DMR") %>% 
+  dplyr::mutate(across(where(is.numeric), ~.^2)) %>% 
+  dplyr::select(DMR, "LVEF(%)", "CRP(mg/dl_<5)","TroponinThs_t1 (ng/l <14or<50)", "CK (U/l _<190)" , "CKmax(U/l_<190)" ,"CK-MB(U/l <24)","CK-MB_Max")
+
+#Annotate with validation status
+validation_corr_biomarkers_raw_data <- validation_corr_biomarkers_raw_data %>% 
+  dplyr::mutate(DMRs_validation=if_else(DMR %in% DMRs[[2]], "validated", "not validated"))
+
+validation_corr_biomarkers_raw_data_long <- validation_corr_biomarkers_raw_data %>%
+  dplyr::rename('CRP (mg/dl)'= "CRP(mg/dl_<5)", 
+                'TroponinT (ng/l)'="TroponinThs_t1 (ng/l <14or<50)",
+                'CK (U/l)'="CK (U/l _<190)",
+                'CK max (U/l)'="CKmax(U/l_<190)",
+                'CK-MB (U/l)'="CK-MB(U/l <24)",
+                'CK-MB max (U/l)'="CK-MB_Max") %>% 
+  tidyr::pivot_longer(-c(DMR, DMRs_validation), names_to = "biomarker", values_to="Rsquared")
+
+#Plot
+clinical_marker_correlation_raw_data <- validation_corr_biomarkers_raw_data_long %>% 
+  ggplot(aes(x = DMRs_validation, y = Rsquared, fill=DMRs_validation)) +
+  geom_boxplot(outlier.size=0.3) +
+  ggpubr::stat_compare_means(size=2, label.x=1.2, label.y=1.1)+  
+  labs(y=expression("R"^2), x="DMRs") +
+  ylim(0,1.25)+
+  scale_fill_manual(name= "DMRs", values=c("darkred", "darkgreen")) +
+  theme_bw()+
+  facet_wrap(vars(biomarker))+
+  theme(strip.text = element_text(size = 6), axis.text=element_text(size=6))
+
+clinical_marker_correlation_raw_data
+
+# ggsave(bg ="white",
+# "/home/arathge/output/plots/ACSS_cardiac_ccfDNA/clinical_marker_correlation_raw_data.tiff",
+# device = "tiff",
+# plot = clinical_marker_correlation_raw_data
+# )
+```
+
+### Coverage weighted %Methylation for ComBat with Quantile Normalisation
+```{r Calculate_coverage_weighted_perc_meth, warning=FALSE, message=FALSE}
+methCovPerBaseWGBS <- setNames(methylKit::getData(methylBaseDB_WGBS_all_samples)[, c(1, 2, 3, methylBaseDB_WGBS_all_samples@coverage.index)], c("chr", "start", "end", methylBaseDB_WGBS_all_samples@sample.ids))
+methCovPerBaseTargeted <- setNames(methylKit::getData(methylBaseDB_validation_no_CAD)[, c(1, 2, 3, methylBaseDB_validation_no_CAD@coverage.index)], c("chr", "start", "end", methylBaseDB_validation_no_CAD@sample.ids))
+#detach("package:methylKit", unload = TRUE)
+#detach("package:GenomicRanges", unload = TRUE)
+
+methCovPerBaseWGBS <- methCovPerBaseWGBS %>%
+  tidyr::unite(tiles, chr, start, end, sep = ".") %>%
+  dplyr::filter(tiles %in% c(tiles))
+
+methCovPerBaseTargeted <- methCovPerBaseTargeted %>%
+  tidyr::unite(tiles, chr, start, end, sep = ".") %>%
+  dplyr::filter(tiles %in% c(tiles))
+
+
+methCovPerBase <- methCovPerBaseWGBS %>% inner_join(methCovPerBaseTargeted)
+methCovPerBase <- methCovPerBase %>% pivot_longer(-tiles, names_to = "sample_ids", values_to = "coverage")
+
+all_data_coverage <- all_data %>% left_join(methCovPerBase, by = c("tiles", "sample_ids"))
+DM_data_coverage <- all_data_coverage %>%
+  tidyr::unite(tiles, tiles, condition, sep = ".") %>%
+  filter(tiles %in% diff_meth_tiles) %>%
+  tidyr::separate(tiles, into = c("chrom", "start", "end", "condition"))
+```
+
+```{r Weighting_Mean_Difference_of_Quantile_Normalised_Combat_Data_After_Backtransformation}
+overlap_log_normalised_combat_no_log_weighted <- overlap_log_normalised_combat_no_log %>% left_join(dplyr::select(all_data_coverage, tiles, sample_ids, coverage), by = c("tiles", "sample_ids"))
+
+calc_weighted_diff_of_means <- function(dataframe_all_samples) {
+  dataframe_all_samples_mean <- dataframe_all_samples %>%
+    dplyr::group_by(tiles, seq_method, condition) %>%
+    dplyr::summarise(weighted_mean = weighted.mean(perc_meth, coverage))
+
+  dataframe_all_samples_mean_diff <- dataframe_all_samples_mean %>%
+    pivot_wider(values_from = weighted_mean, names_from = condition) %>%
+    mutate(
+      meth.diff_STEMI = STEMI - Control,
+      meth.diff_NSTEMI = NSTEMI - Control,
+      meth.diff_UA = UA - Control
+    ) %>%
+    dplyr::select(-c(Control, NSTEMI, STEMI, UA)) %>%
+    dplyr::rename(STEMI = "meth.diff_STEMI", NSTEMI = "meth.diff_NSTEMI", UA = "meth.diff_UA") %>%
+    pivot_longer(-c(tiles, seq_method),
+      names_to = "condition",
+      values_to = "weighted_meth_diff"
+    ) %>%
+    pivot_wider(names_from = "seq_method", values_from = "weighted_meth_diff") %>%
+    dplyr::rename(weighted.meth.diff.WGBS = "WGBS", weighted.meth.diff.targeted = "targeted")
+}
+
+overlap_log_normalised_combat_no_log_weighted <- calc_weighted_diff_of_means(overlap_log_normalised_combat_no_log_weighted)
+
+overlap_DM_log_normalised_combat_log_fold_change_no_log_weighted <- overlap_log_normalised_combat_no_log_weighted %>%
+  tidyr::unite(tiles, tiles, condition, sep = ".") %>%
+  dplyr::filter(tiles %in% c(diff_meth_tiles)) %>%
+  tidyr::separate(tiles, into = c("chrom", "start", "end", "condition"), sep = "\\.") %>% 
+  tidyr::unite(tiles, chrom, start, end, sep=".")
+```
+
+```{r Plot_weighted_difference_of_means_after_quantile_normalisation_combat_and_backtransformation, fig.dim = c(10,10)}
+#Calculate threshold 
+overlap_log_normalised_combat_no_log_weighted <- overlap_log_normalised_combat_no_log_weighted %>% 
+  mutate(threshold_25= case_when((((25 <= weighted.meth.diff.WGBS) & (25 <= weighted.meth.diff.targeted))  | (((weighted.meth.diff.targeted <=-25) & (weighted.meth.diff.WGBS <=-25))) ) ~ "|25%|", TRUE ~ "not in range"))
+
+overlap_DM_log_normalised_combat_log_fold_change_no_log_weighted <- overlap_DM_log_normalised_combat_log_fold_change_no_log_weighted %>% 
+  mutate(threshold_25= case_when((((25 <= weighted.meth.diff.WGBS) & (25 <= weighted.meth.diff.targeted))  | (((weighted.meth.diff.targeted <=-25) & (weighted.meth.diff.WGBS <=-25))) ) ~ "|25%|", TRUE ~ "not in range"))
+
+#Count how many tiles are above/below threshold for each condition
+overlap_log_normalised_combat_no_log_weighted_validated <- overlap_log_normalised_combat_no_log_weighted %>% 
+  dplyr::group_by(condition) %>% 
+  dplyr::count(threshold_25 =="|25%|") %>% 
+  dplyr::rename(threshold_25=2) %>% 
+  pivot_wider(names_from=threshold_25, values_from=n) %>%
+  dplyr::rename(Validated=3, Not_Validated=2) %>% 
+  mutate(percentage=(Validated/(Not_Validated+Validated)*100))
+
+print(overlap_log_normalised_combat_no_log_weighted_validated)
+
+overlap_DM_log_normalised_combat_log_fold_change_no_log_weighted_validated <- overlap_DM_log_normalised_combat_log_fold_change_no_log_weighted %>%   
+  dplyr::group_by(condition) %>% 
+  dplyr::count(threshold_25 =="|25%|") %>% 
+  dplyr::rename(threshold_25=2) %>% 
+  pivot_wider(names_from=threshold_25, values_from=n) %>% 
+  dplyr::rename(Validated=3, Not_Validated=2) %>% 
+  mutate(percentage=(Validated/(Not_Validated+Validated)*100))
+
+print(overlap_DM_log_normalised_combat_log_fold_change_no_log_weighted_validated)
+
+p50 <- overlap_log_normalised_combat_no_log_weighted %>%
+  ggplot(aes(x = weighted.meth.diff.targeted, y = weighted.meth.diff.WGBS, colour=threshold_25)) +
+  geom_point(shape = 16, alpha=0.6, size=2) +
+  geom_vline(xintercept = c(-25, 25), linetype="dotted")+
+  geom_hline(yintercept = c(-25, 25), linetype="dotted")+
+  ylab("Weighted Mean Methylation Difference WGBS") +
+  xlab("Weighted Mean Methylation Difference Targeted Sequencing") +
+  labs(title = "All Common Tiles", colour="Threshold") +
+  stat_cor(method="pearson")+ 
+  xlim(-90, 90) +
+  ylim(-90, 90) +
+  theme(plot.title = element_text(hjust = 0.5, face="bold"), aspect.ratio = 1) +
+  scale_color_manual(values=c("#919494", "#7CAE00"))+
+  facet_grid(cols = vars(condition))
+
+p51 <- overlap_DM_log_normalised_combat_log_fold_change_no_log_weighted %>%
+  ggplot(aes(x = weighted.meth.diff.targeted, y = weighted.meth.diff.WGBS, colour=threshold_25)) +
+  geom_point(shape = 16, alpha=0.6, size=2) +
+  geom_vline(xintercept = c(-25, 25), linetype="dotted")+
+  geom_hline(yintercept = c(-25, 25), linetype="dotted")+
+  ylab("Weighted Mean Methylation Difference WGBS") +
+  xlab("Weighted Mean Methylation Difference Targeted Sequencing") +
+  labs(title = "DM Tiles", colour="Threshold") +
+  stat_cor(method="pearson")+ 
+  xlim(-90, 90) +
+  ylim(-90, 90) +
+  theme(plot.title = element_text(hjust = 0.5, face="bold"), aspect.ratio = 1) +
+  scale_color_manual(values=c("#919494", "#7CAE00"))+
+  facet_grid(cols = vars(condition))
+
+annotate_figure(ggarrange(p50, p51 , nrow=2, ncol=1, labels="AUTO", common.legend = TRUE, legend="right"), text_grob("Log-Backtransformed, Quantile Normalised and ComBat", face = "bold", size=16))
+
+```
+```{r Add_q_value_to_weighted_difference_of_mean, fig.dim=c(10,5)}
+#Add qvalue to dataframe and calculate if threshold for qvalue below 0.01
+overlap_DM_log_normalised_combat_log_fold_change_no_log_weighted_qvalues <- overlap_DM_log_normalised_combat_log_fold_change_no_log_weighted %>% 
+  tidyr::unite(tiles, tiles, condition, sep=".") %>% 
+  left_join(dplyr::select(bind_rows(methylDiff_validation), tiles, qvalue)) %>% 
+  dplyr::rename(qvalue_targeted=qvalue) %>% 
+  left_join(dplyr::select(bind_rows(methylDiff_WGBS), tiles, qvalue)) %>% 
+  dplyr::rename(qvalue_WGBS=qvalue) %>% 
+  tidyr::separate(tiles, into=c("chrom", "start", "end", "condition")) %>% 
+  dplyr::mutate(threshold_25_qvalue= case_when(threshold_25 =="|25%|" & qvalue_targeted <=0.01 & qvalue_WGBS <0.01 ~ "significant", TRUE ~ "insignificant")) 
+
+
+p51 <- overlap_DM_log_normalised_combat_log_fold_change_no_log_weighted_qvalues %>%
+  ggplot(aes(x = weighted.meth.diff.targeted, y = weighted.meth.diff.WGBS, colour=threshold_25_qvalue)) +
+  geom_point(shape = 16, size=2, alpha=0.6) +
+  geom_vline(xintercept = c(-25, 25), linetype="dotted")+
+  geom_hline(yintercept = c(-25, 25), linetype="dotted")+
+  ylab("Weighted Mean Methylation Difference WGBS") +
+  xlab("Weighted Mean Methylation Difference Targeted Sequencing") +
+  labs(title = "DM Tiles", colour="Threshold") +
+  stat_cor(method="pearson")+ 
+  xlim(-90, 90) +
+  ylim(-90, 90) +
+  theme(plot.title = element_text(hjust = 0.5, face="bold"), aspect.ratio = 1) +
+  scale_color_manual(values=c("#919494", "#7CAE00"))+
+  facet_grid(cols = vars(condition))
+
+p51
+```
+
+
+### ComBat without Quantile Normalisation
+```{r}
+long_df_to_matrix <- function(df) {
+  df %>%
+    dplyr::select(1:3) %>%
+    pivot_wider(names_from = sample_ids, values_from = log_transf_perc_meth) %>%
+    column_to_rownames("tiles") %>%
+    as.matrix() %>%
+    return()
+}
+
+
+add_metadata_matrix <- function(mx, metadata_df) {
+  mx %>%
+    as_tibble(rownames = "tiles") %>%
+    pivot_longer(-tiles, names_to = "sample_ids", values_to = "log_transf_perc_meth") %>%
+    left_join(dplyr::select(metadata, sample_ids, seq_method, condition)) %>%
+    pivot_wider(names_from = tiles, values_from = log_transf_perc_meth) %>%
+    return()
+}
+```
+
+#### PCA on log transformed and combat data seperate condition all common tiles
+```{r PCA_log_transformed_and_comBat, message=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+overlap_grouped_log_combat <- overlap_grouped_log %>%
+  map(~ long_df_to_matrix(.) %>%
+  sva::ComBat(dat = ., batch = batch[colnames(.)]) %>%  
+    add_metadata_matrix(., metadata_df = metadata))
+```
+
+```{r, fig.dim=c(10,10)}
+overlap_grouped_log_combat_pca_plot <- overlap_grouped_log_combat %>%
+  map2(
+    names(.),
+    ~ autoplot(prcomp(dplyr::select(.x, starts_with("chr"))), data = .x, colour = "seq_method") +
+      labs(title = .y, colour="Sequencing \nmethod") +
+      theme(plot.title = element_text(hjust = 0.5, face="bold"), aspect.ratio = 1)
+  )
+
+annotate_figure(ggarrange(plotlist = overlap_grouped_log_combat_pca_plot , nrow=2, ncol=2, labels="AUTO", common.legend = TRUE, legend="right"), text_grob("ComBat in Log Space\nAll Common Tiles", face = "bold", size=16))
+
+```
+
+#### PCA on log transformed and combat data all diseases all common tiles
+```{r, PCA_log_transformed_and_comBat2, message=FALSE}
+overlap_log_combat <- overlap_log %>%
+  long_df_to_matrix() %>%
+  ComBat(dat = ., batch = batch[colnames(.)]) %>%
+  add_metadata_matrix(metadata_df = metadata)
+```
+
+```{r}
+p36 <- overlap_log_combat %>% autoplot(prcomp(dplyr::select(., starts_with("chr"))), data = ., colour = "condition") +
+  labs(colour="Condition") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold"), aspect.ratio = 1)
+
+p37 <- overlap_log_combat %>% autoplot(prcomp(dplyr::select(., starts_with("chr"))), data = ., colour = "seq_method") +
+  labs(colour="Sequencing \nmethod") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold"), aspect.ratio = 1)
+
+p55 <- overlap_log_combat %>% autoplot(prcomp(dplyr::select(., starts_with("chr"))), data = ., shape = "seq_method", colour="condition") +
+  labs(title = "ComBat in Log Space\nAll Common Tiles", shape="Sequencing \nmethod", colour="Condition") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold"), aspect.ratio = 1)
+
+#plot_grid(p36, p37, nrow = 1, ncol = 2, labels = "AUTO")
+annotate_figure(ggarrange(p36, p37 , nrow=1, ncol=2, labels="AUTO"), text_grob("ComBat in Log Space\nAll Common Tiles", face = "bold", size=16))
+
+p55
+```
+
+```{r PCA on log transformed and combat data all diseases DM tiles, fig.dim=c(10,10)}
+overlap_DM_grouped_log_combat <-overlap_grouped_log_combat %>%
+  map(~ pivot_longer(., -c(sample_ids, condition, seq_method), names_to = "tiles", values_to = "log_transf_perc_meth")%>%
+  tidyr::unite(tiles, tiles, condition, sep=".") %>%
+  dplyr::filter(tiles %in% c(diff_meth_tiles)) %>%
+  tidyr::separate(tiles, into = c("chrom", "start", "end", "condition"), sep = "\\.") %>%
+  tidyr::unite(tiles, chrom, start, end, sep=".") %>% 
+  pivot_wider(names_from = tiles, values_from = log_transf_perc_meth))
+
+overlap_DM_grouped_log_combat<-overlap_DM_grouped_log_combat[2:4]
+overlap_DM_grouped_log_combat_pca_plot <- overlap_DM_grouped_log_combat%>%
+  map2(
+    names(.),
+    ~ autoplot(prcomp(dplyr::select(.x, starts_with("chr"))), data = .x, colour = "seq_method") +
+      labs(title = .y, colour="Sequencing \nmethod") +
+      theme(plot.title = element_text(hjust = 0.5, face="bold"), aspect.ratio = 1)
+  )
+
+annotate_figure(ggarrange(plotlist = overlap_DM_grouped_log_combat_pca_plot , nrow=2, ncol=2, labels="AUTO", common.legend = TRUE, legend="right"), text_grob("ComBat in Log Space\nDM Tiles", face = "bold", size=16))
+
+```
+
+#### Calculate log fold change for comBat data scatterplot
+```{r Log_fold_change_comBat_Scatterplot, fig.height=5, fig.width=10}
+
+overlap_log_combat_log_fold_change <- overlap_log %>% calc_log_fold_change()
+
+overlap_DM_log_combat_log_fold_change <- overlap_log_combat_log_fold_change %>%
+  tidyr::unite(tiles, tiles, condition, sep = ".") %>%
+  dplyr::filter(tiles %in% c(diff_meth_tiles)) %>%
+  tidyr::separate(tiles, into = c("chrom", "start", "end", "condition"), sep = "\\.")
+
+# Plot
+p38 <- overlap_DM_log_combat_log_fold_change %>% ggplot(aes(x = log_fold_change_targeted, y = log_fold_change_WGBS)) +
+  geom_point(colour = "#7CAE00", shape = 16, size=2, alpha=0.6) +
+  ylab("log fold change WGBS") +
+  xlab("log fold change Targeted Sequencing") +
+  labs(title = "ComBat in Log Space\nAll Common Tiles") +
+  stat_cor(method="pearson")+  
+  ylim(-5, 5) +
+  xlim(-5, +5) +
+  theme(plot.title = element_text(hjust = 0.5, face="bold"), aspect.ratio = 1) +
+  facet_grid(cols = vars(condition))
+
+p38
+```
+
+#### Overview Plot: PCA Grid all common tiles
+```{r Make_PCA_grid, fig.dim=c(10,7.5)}
+data <- list("Log" = overlap_grouped_log_pca, "ComBat"=overlap_grouped_log_combat, "Quantile Normalisation \n+ ComBat" = overlap_grouped_log_normalised_combat_pca) %>%
+  map(bind_rows, .id = "condition2") %>%
+  map(~ bind_cols(
+    dplyr::select(.x, !starts_with("chr")), prcomp(dplyr::select(.x, starts_with("chr")))$x
+  )) %>%
+  bind_rows(.id = "normalization") %>%
+  mutate(normalization = factor(normalization, levels = c( "Log", "ComBat", "Quantile Normalisation \n+ ComBat")))
+
+ggplot(data, aes(PC1, PC2, colour = condition, shape=seq_method)) +
+  geom_point(size=2) +
+  facet_grid(normalization ~ condition2, margins = "condition2", scales = "free") +
+  labs(shape="Sequencing method", colour = "Condition" ) +
+  theme_bw() +
+  theme(aspect.ratio = 1)+
+  scale_x_continuous(sec.axis = sec_axis(~ . , name = "All Common Tiles", breaks = NULL, labels = NULL))
+
+```
+
+### Make Publication Figures
+```{r Make_Publication_Figures}
+
+figure_6 <- ggarrange(p66, p69, nrow=2, labels=c("A", "B"))  
+ggsave(bg ="white",
+"/local/AAkalin_cardiac/Results/cardiac/Plots/Figure6.png",
+device = "png",
+plot = figure_6
+)
+
+
+figureS6 <- ggarrange(p7,
+          ggarrange(p32, p35, ncol = 2, labels =c("B", "C")),
+          nrow=2,
+          labels="A")
+ggsave(bg ="white",
+"/local/AAkalin_cardiac/Results/cardiac/Plots/FigureS6.pdf",
+device = "pdf",
+plot = figureS5
+)
+```

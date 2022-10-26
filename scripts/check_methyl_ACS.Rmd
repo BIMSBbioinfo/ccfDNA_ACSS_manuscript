@@ -1,0 +1,458 @@
+---
+title: "Target sequencing DNA methylation report"
+author: "Rafael Cuadrat"
+output:
+  html_notebook:
+    toc:        TRUE
+    toc_float:  TRUE
+    theme:      "lumen"
+    number_sections: FALSE
+    code_folding: "hide"
+    self_contained: TRUE
+date: "`r Sys.Date()`"
+---
+
+# GOAL
+Design probes for targeted sequencing of validation cohort by identifying the DMR overlap with disease associated regions and probes from the methylation atlas.
+
+# Load Libraries
+```{r Load_libraries}
+library(methylKit)
+library(tidyverse)
+```
+
+```{r Define_samples, results='asis'}
+sample_ids_v = c(
+ '2017',
+ '2018', 
+ '2019', 
+ '2026', 
+ '2027', 
+ '2033',
+ '3052',
+ '3131',
+ '3158', 
+ 'SK',
+ 'VF')
+groups_v= c(1,1,2,3,3,2,1,2,1,0,0)
+```
+
+# Read in data
+```{r Read_in_data}
+p06_methyl_calls_v="/local/rcuadrat/cfdna_validation/out/06_methyl_calls/"
+#samples<-read.csv("sample.txt",sep="\t")
+```
+
+Reading the methylcall logs and parsing bs ratios from the logs
+```{r Parse_for_bs_conversion}
+bs_ratio<-lapply(sample_ids_v, function(s) {
+  FileInput = readLines(paste0(p06_methyl_calls_v,s,"_1_val_1_bt2.sorted.deduped_cpg_meth_calls.log")) 
+  prot_pattern="average conversion rate = ";
+  prot_string<-grep(prot_pattern,FileInput)
+  BS_conversion<-FileInput[prot_string]
+  BS_conversion<-str_split(BS_conversion," = ")[[1]][[2]]
+  sample_id<-s
+  data.frame(sample_id,BS_conversion)
+  
+})
+bs_ratio_all<-do.call(rbind, bs_ratio)
+```
+
+Bisulfite converstion per sample (%):
+```{r Plot_BS_conversion}
+p<-ggplot(data=bs_ratio_all, aes(x=sample_id, y=as.numeric(BS_conversion))) +
+  geom_bar(stat="identity") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+  labs(y="Average conversion rate") + ylim(0, 100)
+p
+```
+
+Read methylation files for each sample and get 
+objects that only bases with coverage from all samples are retained.
+```{r Read_methylation_files}
+#functions
+my.read.Tabix = function( dbpath,
+                          dbtype,
+                          sample.id, 
+                          assembly ,
+                          context,
+                          resolution){
+require(methylKit)
+object.dt =data.table::fread( paste0('zcat ',dbpath))
+methylKit:::.setMethylDBNames(object.dt)
+
+num.records=Rsamtools::countTabix( dbpath )[[1]]
+
+object <- new("methylRawDB",
+          dbpath= dbpath,
+          num.records=num.records,
+          sample.id = sample.id, 
+          assembly = assembly,
+          context=context,
+          resolution=resolution,
+          dbtype=dbtype)
+list(obj=object, 
+     obj.dt=object.dt)
+
+}
+```
+
+```{r Read_tabix_files}
+# reading tabix files
+ tabix.files.filtered.dt=lapply(sample_ids_v, function(s){
+           dbpath = paste0(p06_methyl_calls_v, "methylKit/tabix_cpg/",s,"_1_val_1_bt2.sorted.deduped_cpg.txt.bgz" )
+           tmp=my.read.Tabix(dbpath,
+               "tabix",
+                s, 
+                "hg38" ,
+                "CpG",
+                "base")})
+ names(tabix.files.filtered.dt) = sample_ids_v
+
+ methRawList_fil=new("methylRawList",
+   lapply(tabix.files.filtered.dt, function(x) x$obj),
+   treatment=groups_v)
+```
+
+```{r Define_plot_output}
+PLOTS="/local/rcuadrat/cfdna_validation/plots/"
+```
+
+Ploting methyl stats and cov stats
+```{r Plot_stats, echo = TRUE, out.width="30%"}
+tabix.files.mb = lapply(tabix.files.filtered.dt, function(x) x$obj)
+ for(i in 1:length(tabix.files.mb)){
+   png(paste0(PLOTS, 
+     "getMethylationStats_filteredmincov3_",
+     tabix.files.mb[[i]]@sample.id,
+     "_mqc.png"))
+
+     getMethylationStats(
+       tabix.files.mb[[i]],
+       plot=TRUE,
+       both.strands=FALSE)
+
+   dev.off()
+ }
+
+ for(i in 1:length(tabix.files.mb)){
+   png(paste0(PLOTS, 
+     "getCoverageStats_filteredmincov3_",
+     tabix.files.mb[[i]]@sample.id,
+     "_mqc.png"))
+
+     getCoverageStats(
+       tabix.files.mb[[i]],
+       plot=TRUE,
+       both.strands=FALSE)
+
+   dev.off()
+ }
+```
+
+Unifying a methylkit db object
+```{r Unite}
+methDB<-methylKit::unite(methRawList_fil)
+```
+
+Make PCA from raw DMRs per sample
+```{r PCA_raw_DMRs}
+PCASamples(methDB)
+```
+
+Convert to GRanges object
+```{r Convert_GR}
+gr_DMR_narrow=makeGRangesFromDataFrame(narrow_DMRs %>% separate(DMR,c("seqnames","start","end"),"\\."))
+```
+
+```{r Narrow_DMRs}
+methDB_DMR_norrow<-regionCounts(methDB,gr_DMR_narrow)
+methDB_DMR_norrow
+```
+
+```{r PCA_DMRs_narrow}
+PCASamples(methDB_DMR_norrow)
+```
+
+Get the position of targeted CpGs
+```{r Count_targeted_CpGs}
+regions<-read.csv("/local/rcuadrat/cfdna_target/disease_tissue_spec_cpgs_hg38.txt",sep="\t")
+print(paste0("We target a total of ",nrow(regions)," CpGs"))
+print(paste0("However, we covered a total of ",nrow(as(methDB,"data.frame")), " CpGs in all the samples (=>5 reads)"))
+```
+
+```{r GR_regions}
+regions_gr<-makeGRangesFromDataFrame(regions,seqnames.field=c("chr.hg38"),
+                         start.field="position.hg38",
+                         end.field=c("position.hg38"),
+                         strand.field="strand.hg38")
+```
+
+Cpgs covered by all samples
+```{r methDB_GR}
+#maybe add extra cols
+methDB_gr<-makeGRangesFromDataFrame(as(methDB,"data.frame"),keep.extra.columns = TRUE)
+```
+
+Overlap of actually sequenced cpgs and the targeted
+```{r Find_overlap_seq_targeted}
+#findOverlaps(methDB_gr,regions_gr)
+
+overlap_sequenced_vs_targeted<-findOverlaps(methDB_gr,regions_gr,ignore.strand=TRUE)
+overlap_sequenced_vs_targeted <-data.frame(overlap_sequenced_vs_targeted)
+overlap_sequenced_vs_targeted_final<-data.frame(methDB_gr[overlap_sequenced_vs_targeted$queryHits])
+NOT_overlap_sequenced_vs_targeted_final<-data.frame(methDB_gr[-overlap_sequenced_vs_targeted$queryHits])
+print(paste0("From the ",nrow(regions)," targeted CpGs, there were ",nrow(overlap_sequenced_vs_targeted)," covered in all the samples"))
+```
+
+Do our non-covered CpGs overlap with simple tandem repeats ?
+```{r Non_covered_cpg_tandem_rpts}
+print(paste0("From the ",nrow(as(methDB,"data.frame"))," CpGs covered for all samples, there were ",nrow(NOT_overlap_sequenced_vs_targeted_final)," off target"))
+```
+
+Check how far from the target are all those many CpGs non-target but sequenced (NOT_overlap_sequenced_vs_targeted_final)
+```{r Distance_non_target_cpgs}
+cov_not_target<-NOT_overlap_sequenced_vs_targeted_final %>% dplyr::select(contains("coverage"))
+names(cov_not_target)<-sample_ids_v
+```
+
+```{r Get_target_coverage}
+cov_target<-overlap_sequenced_vs_targeted_final  %>% dplyr::select(contains("coverage"))
+names(cov_target)<-sample_ids_v
+```
+
+Distribution of CpG coverage (number of reads covering the CpG)
+```{r Plot_coverage_distribution}
+ggplot(data=cov_target %>% gather() ,aes(value)) + 
+  geom_histogram() + scale_x_continuous(lim=c(0,1000)) + 
+    facet_wrap(~key, scales = 'free_x')
+```
+
+And then for the CpGs "out of target", those that were not in the BED file sent for the company: 
+```{r Plot_cpg_out_target_distribution}
+ggplot(data=cov_not_target  %>% gather(),aes(value)) + 
+  geom_histogram() + scale_x_continuous(lim=c(0,1000))  +
+    facet_wrap(~key, scales = 'free_x')
+```
+
+# Assign coordinates to targeted sequencing and check results
+```{r Read_in_probes_methatlas}
+probes = readRDS("~/illumina_probes_hg38_GRanges.RDS")
+refExtended = read.csv("/local/agosdsc/projects/AAkalin_cfdTissue/results/extendedReference.csv")
+illumina_probes<-as.data.frame(probes)
+```
+
+Get the coordinates from the CpGs on the meth_atlas
+```{r Get_coordinates}
+illumina_probes_atlas<-illumina_probes  %>% filter(ID %in% refExtended$CpGs)
+```
+
+Overlap sequenced cpgs and meth_atlas
+```{r Overlap_seq_methatlas}
+# findOverlaps(methDB_gr,makeGRangesFromDataFrame(illumina_probes_atlas))
+
+tmp<-findOverlaps(methDB_gr,makeGRangesFromDataFrame(illumina_probes_atlas),ignore.strand=TRUE)
+tmp <-data.frame(tmp)
+tmp_bed3<-data.frame(methDB_gr[tmp$queryHits])
+tmp_bed4<-data.frame(makeGRangesFromDataFrame(illumina_probes_atlas)[tmp$subjectHits])
+final_overlaps<-merge(tmp_bed3,tmp_bed4,by=0)
+
+```
+
+Overlap between the "targeted cpgs" and cpgs from meth_atlas
+```{r Find_overlaps}
+#only gets "+" because there is only "+" on targeted regions_gr (/disease_tissue_spec_cpgs_hg38.txt)
+tmp<-findOverlaps(makeGRangesFromDataFrame(illumina_probes_atlas),regions_gr,ignore.strand=TRUE)
+tmp <-data.frame(tmp)
+tmp_bed3<-data.frame(makeGRangesFromDataFrame(illumina_probes_atlas)[tmp$queryHits])
+tmp_bed4<-data.frame(regions_gr[tmp$subjectHits])
+final_overlaps<-merge(tmp_bed3,tmp_bed4,by=0)
+```
+
+```{r}
+overlaps <- lapply(tabix.files.filtered.dt, function(x) {
+  covered_cpgs<-(nrow(x$obj.dt))
+  cov_cpgs_50<-(nrow(x$obj.dt %>% filter(coverage > 50)))
+  sample1<-makeGRangesFromDataFrame(x$obj.dt,keep.extra.columns = TRUE)
+  tmp<-findOverlaps(sample1,regions_gr,ignore.strand=TRUE)
+  tmp <-data.frame(tmp)
+  tmp_bed3<-data.frame(sample1[tmp$queryHits])
+  tmp_bed4<-data.frame(regions_gr[tmp$subjectHits])
+  final_overlaps<-merge(tmp_bed3,tmp_bed4,by=0)
+  covered_targets<-(nrow(final_overlaps)/nrow(regions))*100
+  
+  
+  sample1<-makeGRangesFromDataFrame(x$obj.dt%>% filter(coverage > 50),keep.extra.columns = TRUE)
+  tmp<-findOverlaps(sample1,regions_gr,ignore.strand=TRUE)
+  tmp <-data.frame(tmp)
+  tmp_bed3<-data.frame(sample1[tmp$queryHits])
+  tmp_bed4<-data.frame(regions_gr[tmp$subjectHits])
+  final_overlaps<-merge(tmp_bed3,tmp_bed4,by=0)
+  cov_targets_50<-(nrow(final_overlaps)/nrow(regions))*100
+  
+  sample_id<-x$obj@sample.id
+  #methstat<-getMethylationStats(x$obj)
+  data.frame(covered_cpgs,covered_targets,sample_id)
+
+
+})
+```
+
+```{r}
+cov_stats<-do.call(rbind, overlaps)
+```
+
+```{r}
+#cov_stats<- merge(cov_stats,samples %>% dplyr::select(sample_id,Sample),by="sample_id") 
+
+```
+
+Distribution % of Targeted CpG covered by the sequencing (at least 5 reads) for each sample
+```{r Plot_%_Covered_CpG_distribution}
+p<-ggplot(data=cov_stats, aes(x=sample_id, y=covered_targets)) +
+  geom_bar(stat="identity") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+  labs(y="Target CpGs cov (%)") + ylim(0, 100)
+p
+```
+
+Calculate methylation %
+```{r Perc_Meth_Calculation}
+new<- lapply(tabix.files.filtered.dt, function(x) {
+  tmp<-x$obj.dt
+  tmp$meth <-  (tmp$numCs / tmp$coverage) *100
+  sample<-x$obj@sample.id
+  #s<-samples %>% dplyr::filter(sample_id ==sample)
+  #s<-samples
+  #tmp$expected<-s$expected.meth
+  #tmp$sample_id<-s$Sample
+  #tmp$error <-  tmp$meth - tmp$expected
+  tmp$sample <- sample
+  tmp
+ })
+```
+
+```{r New_stats_function}
+new_stats<- lapply(new, function(x) {
+  mean_methylation<-mean(x$meth)
+  median_methylation<- median(x$meth)
+  sample_id<-unique(x$sample)
+  sample<-unique(x$sample_id)
+  #expected_methylation<-unique(x$expected)
+  data.frame(sample_id,mean_methylation,median_methylation)
+ })
+```
+
+General stats: percentage of targeted covered, mean and median % methylation on CpGs, expected sample % CpG methylation 
+```{r Final_stats}
+new_stats_all<-do.call(rbind, new_stats)
+final_stats<-merge(cov_stats,new_stats_all,by="sample_id")
+final_stats <- final_stats %>% dplyr::select(-covered_cpgs) 
+final_stats
+```
+
+```{r Testing}
+#testing things
+annotated_DMRs <- readRDS("/local/rcuadrat/cfdna_wgbs/tmp_dfs/annotated_DMRs.RDS")
+
+ACS_STEMI_discovery_gr<-makeGRangesFromDataFrame(annotated_DMRs$ACS_Stemi)
+```
+
+Tiling the target/validation the same way the discovery was done 
+```{r validation_cohort_tiling}
+tiles.path=paste0("/local/rcuadrat/cfdna_validation/tileMethylCounts/")
+tiles=tileMethylCounts(methDB, 
+  win.size=500,
+  step.size=500,
+  save.db=TRUE,
+  suffix="tiles_win500bp_step500bp",
+  dbdir=tiles.path)
+```
+
+```{r set_names_all_samples}
+sample_ids = c(
+ 'N1', # control
+ 'N2',
+ 'N3',
+ 'N4',
+ 'N5',
+ 'N6',
+ 'H26',
+ 'H28',
+
+ 'AC1', #stemi
+ 'AC2',
+ 'AC3',
+ 'AC4',
+ 'AC5',
+ 'AC6',
+ 'AC14',
+ 'AC15',
+
+ 'AC7',# nstemi
+ 'AC8',
+ 'AC9',
+ 'AC10',
+ 'AC11', 
+ 'AC12',
+ 'AC13',
+
+ 'AP1', #Acs/iAP
+ 'AP2',
+ 'AP3',
+ 'AP4',
+ 'AP5',  
+ 'AP6',
+
+ 'CS1', #CAD+posStressEcho
+ 'CS2',
+ 'CS3',
+ 'CS4', 
+ 'CS5',
+ 'CS6'
+)
+
+
+
+treatment=c(
+    rep(0,8),  # control
+    rep(1,8), #stemi
+    rep(2,7),  # nstemi
+    rep(3,6), #Acs/iAP
+    rep(4,6) #CAD+posStressEcho
+     )
+#methT.path = '/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/tileMethylCounts/methylBase_CpG_dT_tiles_win500bp_step500bp_123batch_v1.txt.bgz'
+#meth.deT=methylKit:::readMethylBaseDB(methT.path,"tabix",
+#                 sample_ids, "hg38" ,"CpG",
+#                 "region",treatment,TRUE,skip=0)
+```
+
+```{r read_in_discovery_data}
+p06_methyl_calls="/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/"
+tabix.files.filtered.dt_discovery=lapply(sample_ids, function(s){
+           dbpath = paste0(p06_methyl_calls, s, "/tabix_CpG/",s,"_CpG_filtered.txt.bgz" )
+           tmp=my.read.Tabix(dbpath,
+               "tabix",
+                s, 
+                "hg38" ,
+                "CpG",
+                "base")})
+names(tabix.files.filtered.dt_discovery) = sample_ids
+```
+
+
+```{r Merge_discovery_validation}
+all<-c(tabix.files.filtered.dt,tabix.files.filtered.dt_discovery)
+```
+
+```{r Assign_groups}
+methRawList_fil_all=new("methylRawList",
+   lapply(all, function(x) x$obj),
+   treatment=c(groups_v,treatment))
+```
+
+```{r Reduce_to_common_DMRs}
+methDB_all<-methylKit::unite(methRawList_fil_all)
+```
+
+```{r Make_PCA}
+PCASamples(methDB_all)
+```
