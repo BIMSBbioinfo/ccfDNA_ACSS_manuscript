@@ -17,6 +17,10 @@ library(deconvR)
 probes = readRDS("~/illumina_probes_hg38_GRanges.RDS")
 refExtended = read.csv("/local/agosdsc/projects/AAkalin_cfdTissue/results/extendedReference.csv")
 suppl_tbl_2<-readRDS("/local/rcuadrat/cfdna_wgbs/suppl_tbl_2.RDS")
+methT.path = '/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/tileMethylCounts/methylBase_CpG_dT_tiles_win500bp_step500bp_123batch_v1.txt.bgz'
+meth.deT=methylKit:::readMethylBaseDB(methT.path,"tabix",
+                                      sample_ids, "hg38" ,"CpG",
+                                      "region",treatment =  treatment1,TRUE,skip=0)
 
 ```
 
@@ -136,6 +140,11 @@ mapping = deconvR::BSmeth2Probe(probe_id_locations = probes, WGBS_data = meth.de
 
 Prediction of cell-type proportions of bulk methylation profiles, as well as partial R-squared values for each sample using non-negative least square regression.
 ```{r Cell_type_prediction}
+meth.deT@treatment=treatment1
+mapping = deconvR::BSmeth2Probe(probe_id_locations = probes, WGBS_data = meth.deT)
+
+
+
 decon_nnls_extended = deconvR::deconvolute(reference=refExtended, bulk=mapping, model="nnls")
 
 decon_nnls_extended_0 = decon_nnls_extended[1:8,]    
