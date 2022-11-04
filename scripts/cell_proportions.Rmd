@@ -14,6 +14,62 @@ library(deconvR)
 
 # Read in Data
 ```{r Read_in_data}
+sample_ids = c(
+ 'N1', # control
+ 'N2',
+ 'N3',
+ 'N4',
+ 'N5',
+ 'N6',
+ 'H26',
+ 'H28',
+ 'AC1', #stemi
+ 'AC2',
+ 'AC3',
+ 'AC4',
+ 'AC5',
+ 'AC6',
+ 'AC14',
+ 'AC15',
+ 'AC7',# nstemi
+ 'AC8',
+ 'AC9',
+ 'AC10',
+ 'AC11', 
+ 'AC12',
+ 'AC13',
+ 'AP1', #Acs/iAP
+ 'AP2',
+ 'AP3',
+ 'AP4',
+ 'AP5',  
+ 'AP6',
+ 'CS1', # CAD+posStressEcho+negIntervention
+ 'CS2',
+ 'CS3',
+ 'CS4', # CAD+posStressEcho+posIntervention
+ 'CS5',
+ 'CS6'
+)
+treatment1=c(
+    rep(0,8),  # control
+    rep(1,8), #stemi
+    rep(2,7),  # nstemi
+    rep(3,6), #Acs/iAP
+    rep(4,3), #CAD+posStressEcho+negIntervention
+    rep(5,3) #CAD+posStressEcho+posIntervention
+     )
+
+
+treatment_descr=c(
+  rep("Control",8),  # control
+  rep("ACS_Stemi",8), #stemi
+  rep("ACS_Nstemi",7),  # nstemi
+  rep("ACS_iAP",6), #Acs/iAP
+  rep("CAD+posStressEcho+neg",3),
+  rep("CAD+posStressEcho+pos",3)
+)
+
 probes = readRDS("~/illumina_probes_hg38_GRanges.RDS")
 refExtended = read.csv("/local/agosdsc/projects/AAkalin_cfdTissue/results/extendedReference.csv")
 suppl_tbl_2<-readRDS("/local/rcuadrat/cfdna_wgbs/suppl_tbl_2.RDS")
@@ -22,6 +78,10 @@ meth.deT=methylKit:::readMethylBaseDB(methT.path,"tabix",
                                       sample_ids, "hg38" ,"CpG",
                                       "region",treatment =  treatment1,TRUE,skip=0)
 
+desc<-data.frame(treatment1,treatment_descr,sample_ids)
+desc<-desc %>% rename("treatment"="treatment1")
+desc<-unique(desc)
+desc$treatment_descr <- gsub("iAP","UA",desc$treatment_descr)
 ```
 
 # Set theme
