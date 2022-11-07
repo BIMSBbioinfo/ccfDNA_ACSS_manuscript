@@ -489,13 +489,26 @@ Figure1A <- ggplot(suppl_tbl_2, aes(x = as.factor(treatment_descr), y = cfDNA_ug
 Figure1A
 
 Figure_1 <- ggarrange(Figure1A, Figure1B, ncol = 2, widths = c(1, 2), align = "h", labels = c("A", "B"))
+
 ggsave(
   bg = "white",
-  "/local/AAkalin_cardiac/Results/cardiac/Plots/Figure1.pdf",
-  device = "pdf",
+  "/local/AAkalin_cardiac/Results/cardiac/Plots/temp_Figure1.png",
+  device = "png",
   plot = Figure_1, width = 210, units = "mm", height = 110
 )
 Figure_1
+
+#as <= unicode symbols cannot be exported by ggsave, a conversion needs to be performed
+pdf("/local/AAkalin_cardiac/Results/cardiac/Plots/Figure1.pdf")
+grid.arrange(
+  rasterGrob(
+    readPNG("/local/AAkalin_cardiac/Results/cardiac/Plots/temp_Figure1.png",
+      native = F
+    )
+  )
+)
+dev.off()
+file.remove("/local/AAkalin_cardiac/Results/cardiac/Plots/temp_Figure1.png")
 ```
 
 ```{r}
