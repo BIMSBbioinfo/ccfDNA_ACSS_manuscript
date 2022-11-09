@@ -1940,6 +1940,6 @@ figureS6 <- ggarrange(p7,
 ggsave(bg ="white",
 "/local/AAkalin_cardiac/Results/cardiac/Plots/FigureS6.pdf",
 device = "pdf",
-plot = figureS5
+plot = figureS6
 )
 ```
