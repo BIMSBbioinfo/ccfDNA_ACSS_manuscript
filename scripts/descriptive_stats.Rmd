@@ -25,6 +25,9 @@ library(ggpubr)
 library(corrplot)
 library(gridGraphics)
 library(GGally)
+library(png)
+library(gridExtra)
+library(nnet)
 ```
 
 # Theme Settings
@@ -243,7 +246,7 @@ p_values <- cor.mtest(corr_biomarkers, conf.level = 0.95)
 # if p == 0 I set it to 0.0001 and change legend to pvalue < 0.0001 so after -log10 caluculation correlation does not vanish from the plot; good as reference for viewer:
 p_values$p[p_values$p < 0.000541619] <- 0.0001
 
-Figure1B <- (corr_biomarkers * upper.tri(corr_biomarkers, diag = TRUE)) %>%
+Figure1C <- (corr_biomarkers * upper.tri(corr_biomarkers, diag = TRUE)) %>%
   as_tibble(rownames = "variable1") %>%
   pivot_longer(-variable1, names_to = "variable2", values_to = "corr_coeff") %>%
   filter(corr_coeff != 0) %>%
@@ -285,7 +288,7 @@ Figure1B <- (corr_biomarkers * upper.tri(corr_biomarkers, diag = TRUE)) %>%
     axis.text.y = element_text(size = 12)
   )
 
-Figure1B
+Figure1C
 ```
 ```{r Experimental_Plot}
 # f1a<-ggplot(suppl_tbl_2, aes(x=as.factor(treatment_descr), y=cfDNA_ug_per_ml_plasma, fill=as.factor(treatment_descr))) +
@@ -303,6 +306,63 @@ Figure1B
 ```{r Assign_Group_Colours}
 group.colors <- c(Healthy = "#58cc67", UA = "#cc5c58", Nstemi = "#cc9658", Stemi = "#6058cc")
 ```
+
+Test for association of clinical markers with ACS classification to show that new markers are required for classification
+```{r}
+## Use multinomial log-linear models via neural networks
+clinical_markers <- c("TroponinT [ng/l]", "LVEF[%]", "CK [U/l]", "CK max [U/l]", "CK-MB [U/l]", "CK-MB max [U/l]", "ccfDNA [ng/mL]")
+misclassification_rates <-c()
+
+for (marker in clinical_markers){
+    obj<- tibble::as_tibble(table_markers_ACS %>% 
+                              dplyr::left_join(suppl_tbl_2 %>% 
+                                                 dplyr::select(Sample, cfDNA_ug_per_ml_plasma))) %>%
+      dplyr::rename("ccfDNA [ng/mL]"="cfDNA_ug_per_ml_plasma",
+                    "TroponinT [ng/l]" = "TroponinT (ng/l)",
+                    "LVEF[%]" ="LVEF(%)",
+                    "CK [U/l]" = "CK (U/l)",
+                    "CK max [U/l]" = "CK max (U/l)",
+                    "CK-MB [U/l]" = "CK-MB (U/l)",
+                    "CK-MB max [U/l]" = "CK-MB max (U/l)"
+                    ) %>% 
+      dplyr::mutate(treatment=factor(treatment, levels=c("1", "2", "3"))) %>%
+      dplyr::select(treatment, marker)
+    
+    #run model and get probabilities per class
+    nnet_model=nnet::multinom(formula = unlist(obj[,1]) ~ unlist(obj[,2]) , data=obj, model=TRUE)
+    probabilites <- fitted(nnet_model)
+    
+    #Get prediction from hightest p-value out of all classes
+    predicted_ACS_type <- as_tibble(probabilites) %>% dplyr::mutate(prediction=names(.)[max.col(.)])
+    
+    #Calculate misclassification rate for marker
+    classification_table<-tibble(True_ACS_type= obj %>% filter(!is.na(.[[2]])) %>% select(treatment) %>% pull, predicted_ACS_type=predicted_ACS_type$prediction)
+    tab <- table(classification_table$predicted_ACS_type, classification_table$True_ACS_type)
+    misclassification<-1-sum(diag(tab))/sum(tab)
+    misclassification_rates <- append(misclassification_rates, misclassification)
+    
+}
+names(misclassification_rates)<-clinical_markers
+misclassification_rates <- as_tibble(misclassification_rates, rownames = "Marker")
+
+Figure1B <- ggplot(arrange(misclassification_rates, Marker), aes(x = Marker, y = value)) +
+  geom_bar(stat = "identity") +
+  labs(y="Misclassification \nrate")+
+  theme_Publication() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size=20),
+    axis.title.y = element_blank(),
+    axis.title.x = element_text(vjust =1),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  coord_flip()
+Figure1B
+```
+
+
+
+
 
 ## Distribution Clinical Markers
 ```{r Troponin_T_Boxplot}
@@ -372,6 +432,7 @@ plot_d <- ggplot(table_markers, aes(x = as.factor(treatment_descr), y = `CK max 
   scale_x_discrete(labels = c("STEMI", "NSTEMI", "UA", "Healthy"))
 plot_d
 ```
+
 ```{r CK-MB_Boxplot}
 plot_e <- ggplot(table_markers, aes(x = as.factor(treatment_descr), y = `CK-MB (U/l)`, fill = as.factor(treatment_descr))) +
   geom_boxplot(alpha = 0.9) +
@@ -469,12 +530,12 @@ suppl_tbl_2$genome_equivalents_per_ml <- (suppl_tbl_2$total_amount_cfDNA_ug / su
 suppl_tbl_2$cfDNA_ug_per_ml_plasma <- (suppl_tbl_2$total_amount_cfDNA_ug / suppl_tbl_2$mL_Plasma_used)
 ```
 
-```{r Amout_cfDNA_Plot,fig.height = 5, fig.width = 8}
+```{r Amout_cfDNA_Plot,fig.height = 10, fig.width = 12}
 Figure1A <- ggplot(suppl_tbl_2, aes(x = as.factor(treatment_descr), y = cfDNA_ug_per_ml_plasma, fill = as.factor(treatment_descr))) +
   geom_boxplot(alpha = 0.9) +
   geom_jitter(shape = 16, position = position_jitter(0.2)) +
   xlab("") +
-  ylab("ccfDNA [ng/mL]") +
+  ylab(expression("ccfDNA ["*mu*"g/mL]") )+
   scale_fill_Publication() +
   theme_Publication() +
   theme(
@@ -488,15 +549,16 @@ Figure1A <- ggplot(suppl_tbl_2, aes(x = as.factor(treatment_descr), y = cfDNA_ug
 
 Figure1A
 
-Figure_1 <- ggarrange(Figure1A, Figure1B, ncol = 2, widths = c(1, 2), align = "h", labels = c("A", "B"))
+Figure_1AB <- ggarrange(Figure1A, Figure1B, ncol = 2, widths = c(1,1), align = "h", labels = c("A", "B"))
+FigureABC <- ggarrange(Figure_1AB, Figure1C, nrow=2, labels=c("", "C"))
 
-ggsave(
+ggplot2::ggsave(
   bg = "white",
   "/local/AAkalin_cardiac/Results/cardiac/Plots/temp_Figure1.png",
   device = "png",
-  plot = Figure_1, width = 210, units = "mm", height = 110
+  plot = FigureABC, width = 210, units = "mm", height = 210
 )
-Figure_1
+FigureABC
 
 #as <= unicode symbols cannot be exported by ggsave, a conversion needs to be performed
 pdf("/local/AAkalin_cardiac/Results/cardiac/Plots/Figure1.pdf")
