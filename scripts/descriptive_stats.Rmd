@@ -237,7 +237,18 @@ methDB_DMR_validation_narrow_perc_top <- readRDS("/local/rcuadrat/cfdna_validati
 # Analysis
 ## Correlation Clinical Markers
 ```{r Calculate_Correlations_Between_Clincal_Markers}
-corr_biomarkers <- cor(table_markers_ACS %>% dplyr::select("ng ccfDNA /mL plasma", "LVEF(%)", "CRP (mg/dl)", "TroponinT (ng/l)", "CK (U/l)", "CK max (U/l)", "CK-MB (U/l)", "CK-MB max (U/l)") %>% dplyr::rename("ccfDNA ng/ml" = "ng ccfDNA /mL plasma"), use = "complete.obs")
+table_markers_ACS <- table_markers_ACS %>% dplyr::rename("ccfDNA [\u03BCg/ml]"= "ng ccfDNA /mL plasma",
+                    "TroponinT [ng/l]" = "TroponinT (ng/l)",
+                    "LVEF [%]" ="LVEF(%)",
+                    "CK [U/l]" = "CK (U/l)",
+                    "CK max [U/l]" = "CK max (U/l)",
+                    "CK-MB [U/l]" = "CK-MB (U/l)",
+                    "CK-MB max [U/l]" = "CK-MB max (U/l)",
+                    "CRP [mg/dl]" = "CRP (mg/dl)"
+                    )
+
+
+corr_biomarkers <- cor(table_markers_ACS %>% dplyr::select(str_sort(c("ccfDNA [\u03BCg/ml]", "CK-MB max [U/l]", "CK max [U/l]",  "CRP [mg/dl]", "LVEF [%]", "TroponinT [ng/l]", "CK [U/l]", "CK-MB [U/l]"), decreasing=FALSE)), use = "complete.obs")
 ```
 
 ```{r}
@@ -310,21 +321,21 @@ group.colors <- c(Healthy = "#58cc67", UA = "#cc5c58", Nstemi = "#cc9658", Stemi
 Test for association of clinical markers with ACS classification to show that new markers are required for classification
 ```{r}
 ## Use multinomial log-linear models via neural networks
-clinical_markers <- c("TroponinT [ng/l]", "LVEF[%]", "CK [U/l]", "CK max [U/l]", "CK-MB [U/l]", "CK-MB max [U/l]", "ccfDNA [ng/mL]")
+clinical_markers <- str_sort(c("ccfDNA [\u03BCg/ml]", "CK [U/l]", "CK max [U/l]", "CK-MB [U/l]", "CK-MB max [U/l]", "CRP [mg/dl]", "LVEF [%]", "TroponinT [ng/l]"), decreasing = FALSE)
 misclassification_rates <-c()
 
 for (marker in clinical_markers){
-    obj<- tibble::as_tibble(table_markers_ACS %>% 
-                              dplyr::left_join(suppl_tbl_2 %>% 
-                                                 dplyr::select(Sample, cfDNA_ug_per_ml_plasma))) %>%
-      dplyr::rename("ccfDNA [ng/mL]"="cfDNA_ug_per_ml_plasma",
-                    "TroponinT [ng/l]" = "TroponinT (ng/l)",
-                    "LVEF[%]" ="LVEF(%)",
-                    "CK [U/l]" = "CK (U/l)",
-                    "CK max [U/l]" = "CK max (U/l)",
-                    "CK-MB [U/l]" = "CK-MB (U/l)",
-                    "CK-MB max [U/l]" = "CK-MB max (U/l)"
-                    ) %>% 
+    obj<- tibble::as_tibble(table_markers_ACS) %>% 
+      #                         dplyr::left_join(suppl_tbl_2 %>% 
+      #                                            dplyr::select(Sample, cfDNA_ug_per_ml_plasma))) %>%
+      # dplyr::rename("ccfDNA [\u03BCg/ml]"= "cfDNA_ug_per_ml_plasma",
+      #               "TroponinT [ng/l]" = "TroponinT (ng/l)",
+      #               "LVEF [%]" ="LVEF(%)",
+      #               "CK [U/l]" = "CK (U/l)",
+      #               "CK max [U/l]" = "CK max (U/l)",
+      #               "CK-MB [U/l]" = "CK-MB (U/l)",
+      #               "CK-MB max [U/l]" = "CK-MB max (U/l)"
+      #               ) %>% 
       dplyr::mutate(treatment=factor(treatment, levels=c("1", "2", "3"))) %>%
       dplyr::select(treatment, marker)
     
@@ -344,19 +355,22 @@ for (marker in clinical_markers){
 }
 names(misclassification_rates)<-clinical_markers
 misclassification_rates <- as_tibble(misclassification_rates, rownames = "Marker")
-
-Figure1B <- ggplot(arrange(misclassification_rates, Marker), aes(x = Marker, y = value)) +
+misclassification_rates$Marker <- factor(misclassification_rates$Marker, levels =str_sort(c("ccfDNA [\u03BCg/ml]", "CK [U/l]", "CK max [U/l]", "CK-MB [U/l]", "CK-MB max [U/l]", "CRP [mg/dl]", "LVEF [%]", "TroponinT [ng/l]"), decreasing = TRUE))
+                                         
+                                         
+Figure1B <- ggplot(misclassification_rates, aes(x = Marker, y = value)) +
   geom_bar(stat = "identity") +
   labs(y="Misclassification \nrate")+
   theme_Publication() +
   theme(
-    axis.text.x = element_text(angle = 45, hjust = 1, size=20),
+    axis.text.x = element_text(angle = 45, hjust = 1),
     axis.title.y = element_blank(),
     axis.title.x = element_text(vjust =1),
     panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank()
+    panel.grid.minor = element_blank(),
   ) +
-  coord_flip()
+  coord_flip()+
+  scale_y_continuous(expand = c(0.0,0))
 Figure1B
 ```
 
@@ -535,7 +549,7 @@ Figure1A <- ggplot(suppl_tbl_2, aes(x = as.factor(treatment_descr), y = cfDNA_ug
   geom_boxplot(alpha = 0.9) +
   geom_jitter(shape = 16, position = position_jitter(0.2)) +
   xlab("") +
-  ylab(expression("ccfDNA ["*mu*"g/mL]") )+
+  ylab(expression("ccfDNA ["*mu*"g/ml]") )+
   scale_fill_Publication() +
   theme_Publication() +
   theme(
@@ -1214,11 +1228,11 @@ DMR_percMeth_ACS <- t(DMR_percMeth_ACS)
 dmr_names <- names(as.data.frame(DMR_percMeth_ACS))
 DMR_percMeth_ACS <- rownames_to_column(as.data.frame(DMR_percMeth_ACS), var = "Sample")
 DMR_percMeth_ACS_markers <- merge(DMR_percMeth_ACS, table_markers_ACS, by = "Sample")
-DMR_percMeth_ACS_markers <- DMR_percMeth_ACS_markers %>% rename("ccfDNA_ng_per_ml_plasma" = `ng ccfDNA /mL plasma`)
+#DMR_percMeth_ACS_markers <- DMR_percMeth_ACS_markers %>% rename("ccfDNA_ng_per_ml_plasma" = `ng ccfDNA /mL plasma`)
 ```
 
 ```{r}
-marker_names <- c("treatment", "LVEF(%)", "CRP (mg/dl)", "TroponinT (ng/l)", "CK (U/l)", "CK max (U/l)", "CK-MB (U/l)", "CK-MB max (U/l)")
+marker_names <- c("treatment", "LVEF [%]", "CRP [mg/dl]", "TroponinT [ng/l]", "CK [U/l]", "CK max [U/l]", "CK-MB [U/l]", "CK-MB max [U/l]")
 ```
 
 ```{r}
@@ -1244,7 +1258,7 @@ for (n in marker_names) {
   test_anova <- list()
 
   # LM testing biomarkers ~ ccDNA
-  test <- lm(DMR_percMeth_ACS_markers[[n]] ~ DMR_percMeth_ACS_markers$ccfDNA_ng_per_ml_plasma)
+  test <- lm(DMR_percMeth_ACS_markers[[n]] ~ DMR_percMeth_ACS_markers$`ccfDNA [<U+03BC>g/ml]`)
 
   results_lm[[n]] <- test
   summaries[[n]] <- summary(test)
@@ -1252,10 +1266,10 @@ for (n in marker_names) {
   all_results[[n]] <- as.data.frame(summary(test)$coefficients)
 
   for (i in dmr_names) {
-    # tmp <- DMR_percMeth_ACS_markers %>% select( all_of(n), all_of(i),ccfDNA_ng_per_ml_plasma )
+    # tmp <- DMR_percMeth_ACS_markers %>% select( all_of(n), all_of(i),`ccfDNA [<U+03BC>g/ml]` )
 
     # LM biomarkers ~ methylation DMRs + cfDNA
-    test2 <- lm(DMR_percMeth_ACS_markers[[n]] ~ DMR_percMeth_ACS_markers[[i]] + scale(DMR_percMeth_ACS_markers$ccfDNA_ng_per_ml_plasma))
+    test2 <- lm(DMR_percMeth_ACS_markers[[n]] ~ DMR_percMeth_ACS_markers[[i]] + scale(DMR_percMeth_ACS_markers$`ccfDNA [<U+03BC>g/ml]`))
     # LM biomarkers ~ methylation
     test3 <- lm(DMR_percMeth_ACS_markers[[n]] ~ DMR_percMeth_ACS_markers[[i]])
 
@@ -1281,7 +1295,7 @@ for (n in marker_names) {
   # model 2, biomarkers ~ DMRs adjusting by cfDNA
   test_all_adj <- do.call("rbind", all_results_adj)
   test_all_adj <- test_all_adj[!grepl("Intercept", row.names(test_all_adj)), ]
-  test_all_adj <- test_all_adj[!grepl("ccfDNA_ng_per_ml_plasma", row.names(test_all_adj)), ]
+  test_all_adj <- test_all_adj[!grepl("ccfDNA [<U+03BC>g/ml]", row.names(test_all_adj)), ]
   test_all_adj <- tibble::rownames_to_column(as.data.frame(test_all_adj), var = "DMR")
   test_all_adj <- test_all_adj %>% separate(DMR, c("DMR", "marker"), ".DMR_")
   # test_all_adj$marker=str_replace(test_all_adj$marker,"\\$\\`","")
@@ -1327,11 +1341,11 @@ LMs_DMRs_markers <- do.call("rbind", LM_tests_3)
 ```
 
 ```{r}
-corr_biomarkers <- cor(DMR_percMeth_ACS_markers %>% dplyr::select("treatment", "ccfDNA_ng_per_ml_plasma", "LVEF(%)", "CRP (mg/dl)", "TroponinT (ng/l)", "CK (U/l)", "CK max (U/l)", "CK-MB (U/l)", "CK-MB max (U/l)"), use = "complete.obs", method = "pearson")
+#corr_biomarkers <- cor(DMR_percMeth_ACS_markers %>% dplyr::select("treatment", "ccfDNA [<U+03BC>g/ml]", "LVEF [%]", "CRP [mg/dl]", "TroponinT [ng/l]", "CK [U/l]", "CK max [U/l]", "CK-MB [U/l]", "CK-MB max [U/l]"), use = "complete.obs", method = "pearson")
 ```
 
 ```{r}
-corr_biomarkers
+#corr_biomarkers
 ```
 
 ```{r}
@@ -1351,19 +1365,19 @@ top_DMR_treatment <- top_DMR_treatment %>% separate(DMR, c("seqnames", "start", 
 ```
 
 ```{r}
-tropo_LM <- LM_tests_adj$`TroponinT (ng/l)`
+tropo_LM <- LM_tests_adj$`TroponinT [ng/l]`
 top_DMR_tropo <- tropo_LM[order(tropo_LM$`Pr(>|t|)`, decreasing = FALSE), ][1:5, ]
 top_DMR_tropo <- top_DMR_tropo %>% separate(DMR, c("seqnames", "start", "end"), "\\.")
 ```
 
 ```{r}
-CK_max_LM <- LM_tests_adj$`CK max (U/l)`
+CK_max_LM <- LM_tests_adj$`CK max [U/l]`
 top_DMR_CK_max_LM <- CK_max_LM[order(CK_max_LM$`Pr(>|t|)`, decreasing = FALSE), ][1:5, ]
 top_DMR_CK_max_LM <- top_DMR_CK_max_LM %>% separate(DMR, c("seqnames", "start", "end"), "\\.")
 ```
 
 ```{r}
-CK_MB_max_LM <- LM_tests_adj$`CK-MB max (U/l)`
+CK_MB_max_LM <- LM_tests_adj$`CK-MB max [U/l]`
 top_DMR_CK_MB_max_LM <- CK_MB_max_LM[order(CK_MB_max_LM$`Pr(>|t|)`, decreasing = FALSE), ][1:5, ]
 top_DMR_CK_MB_max_LM <- top_DMR_CK_MB_max_LM %>% separate(DMR, c("seqnames", "start", "end"), "\\.")
 ```
@@ -1374,9 +1388,9 @@ top_DMR_CK_MB_max_LM <- top_DMR_CK_MB_max_LM %>% separate(DMR, c("seqnames", "st
 
 ```{r}
 sig_DMR_treatment <- LM_tests_adj$treatment
-sig_DMR_tropo <- LM_tests_adj$`TroponinT (ng/l)`
-sig_DMR_CK_max <- LM_tests_adj$`CK max (U/l)`
-sig_DMR_CK_MB_max <- LM_tests_adj$`CK-MB max (U/l)`
+sig_DMR_tropo <- LM_tests_adj$`TroponinT [ng/l]`
+sig_DMR_CK_max <- LM_tests_adj$`CK max [U/l]`
+sig_DMR_CK_MB_max <- LM_tests_adj$`CK-MB max [U/l]`
 ```
 
 ```{r}
@@ -1454,7 +1468,7 @@ percMeth_ACS_DMRs_sig_lm_for_heat <- merge(as.data.frame((percMeth_ACS_DMRs_sig_
 
 
 ```{r,fig.height= 10,fig.width=6}
-Heatmap(t(percMeth_ACS_DMRs_sig_lm), clustering_distance_columns = "spearman", column_names_gp = gpar(col = c(rep("red", 8), rep("blue", 8), rep("green", 7), rep("pink", 6))), show_row_names = FALSE)
+stats::heatmap(t(percMeth_ACS_DMRs_sig_lm), clustering_distance_columns = "spearman", column_names_gp = gpar(col = c(rep("red", 8), rep("blue", 8), rep("green", 7), rep("pink", 6))), show_row_names = FALSE)
 ```
 
 
@@ -1671,17 +1685,7 @@ counts$marker <- gsub("[\r\n]", "", counts$marker)
 
 ```{r Figure_5a,fig.height= 9,fig.width=9}
 counts <- as_tibble(counts) %>%
-  dplyr::arrange((marker)) %>%
-  dplyr::mutate(marker = case_when(
-    marker == "LVEF(%)" ~ "LVEF [%]",
-    marker == "CRP (mg/dl)" ~ "CRP [mg/dl]",
-    marker == "TroponinT (ng/l)" ~ "TroponinT [ng/l]",
-    marker == "CK (U/l)" ~ "CK [U/l]",
-    marker == "CK max (U/l)" ~ "CK max [U/l]",
-    marker == "CK-MB (U/l)" ~ "CK-MB [U/l]",
-    marker == "CK-MB max (U/l)" ~ "CK-MB max [U/l]",
-    TRUE ~ "Disease"
-  ))
+  dplyr::mutate(marker=factor(marker, levels=str_sort(unique(counts$marker), decreasing = TRUE)))
 
 Figure_5A <- ggplot(counts, aes(x = marker, y = Percentage)) +
   geom_bar(stat = "identity") +
