@@ -276,8 +276,8 @@ Figure1C <- (corr_biomarkers * upper.tri(corr_biomarkers, diag = TRUE)) %>%
   )) +
   scale_fill_gradient(low = "White", high = "white", limits = c(-1, 1), na.value = "transparent") +
   scale_colour_gradient2(limits = c(-1, 1)) +
-  scale_size_continuous(labels = c("\u2264 0.1", "\u2264 0.01", "\u2264 0.001", "\u2264 0.0001"), breaks = c(1, 2, 3, 4)) +
-  labs(colour = "Pearson\ncoefficient", size = "p-value") +
+  scale_size_continuous(labels = expression("">=10^{-1},"">=10^{-2},"">=10^{-3},"">=10^{-4}), breaks = c(1, 2, 3, 4)) + # c("\u2264 0.1", "\u2264 0.01", "\u2264 0.001", "\u2264 0.0001")
+  labs(colour = "Pearson's r", size = "p-value") + # "Pearson\ncoefficient"
   guides(
     fill = "none",
     colour = guide_colourbar(order = 1),
@@ -326,16 +326,6 @@ misclassification_rates <-c()
 
 for (marker in clinical_markers){
     obj<- tibble::as_tibble(table_markers_ACS) %>% 
-      #                         dplyr::left_join(suppl_tbl_2 %>% 
-      #                                            dplyr::select(Sample, cfDNA_ug_per_ml_plasma))) %>%
-      # dplyr::rename("ccfDNA [\u03BCg/ml]"= "cfDNA_ug_per_ml_plasma",
-      #               "TroponinT [ng/l]" = "TroponinT (ng/l)",
-      #               "LVEF [%]" ="LVEF(%)",
-      #               "CK [U/l]" = "CK (U/l)",
-      #               "CK max [U/l]" = "CK max (U/l)",
-      #               "CK-MB [U/l]" = "CK-MB (U/l)",
-      #               "CK-MB max [U/l]" = "CK-MB max (U/l)"
-      #               ) %>% 
       dplyr::mutate(treatment=factor(treatment, levels=c("1", "2", "3"))) %>%
       dplyr::select(treatment, marker)
     
@@ -347,33 +337,38 @@ for (marker in clinical_markers){
     predicted_ACS_type <- as_tibble(probabilites) %>% dplyr::mutate(prediction=names(.)[max.col(.)])
     
     #Calculate misclassification rate for marker
-    classification_table<-tibble(True_ACS_type= obj %>% filter(!is.na(.[[2]])) %>% select(treatment) %>% pull, predicted_ACS_type=predicted_ACS_type$prediction)
+    classification_table<-tibble(True_ACS_type= obj %>% 
+                                   dplyr::filter(!is.na(.[[2]])) %>% 
+                                   dplyr::select(treatment) %>% 
+                                   dplyr::pull(), 
+                                 predicted_ACS_type = predicted_ACS_type$prediction)
+    
     tab <- table(classification_table$predicted_ACS_type, classification_table$True_ACS_type)
+    
     misclassification<-1-sum(diag(tab))/sum(tab)
     misclassification_rates <- append(misclassification_rates, misclassification)
     
 }
+
 names(misclassification_rates)<-clinical_markers
 misclassification_rates <- as_tibble(misclassification_rates, rownames = "Marker")
 misclassification_rates$Marker <- factor(misclassification_rates$Marker, levels =str_sort(c("ccfDNA [\u03BCg/ml]", "CK [U/l]", "CK max [U/l]", "CK-MB [U/l]", "CK-MB max [U/l]", "CRP [mg/dl]", "LVEF [%]", "TroponinT [ng/l]"), decreasing = TRUE))
                                          
                                          
-Figure1B <- ggplot(misclassification_rates, aes(x = Marker, y = value)) +
+Figure1B <- ggplot(misclassification_rates, aes(y = Marker, x = value)) +
   geom_bar(stat = "identity") +
-  labs(y="Misclassification \nrate")+
+  labs(x="Misclassification \nrate")+
   theme_Publication() +
   theme(
     axis.text.x = element_text(angle = 45, hjust = 1),
     axis.title.y = element_blank(),
-    axis.title.x = element_text(vjust =1),
+    # axis.title.x = element_text(vjust =1),
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank(),
   ) +
-  coord_flip()+
-  scale_y_continuous(expand = c(0.0,0))
+  scale_x_continuous(expand = c(0.0,0))
 Figure1B
 ```
-
 
 
 
@@ -554,7 +549,7 @@ Figure1A <- ggplot(suppl_tbl_2, aes(x = as.factor(treatment_descr), y = cfDNA_ug
   theme_Publication() +
   theme(
     legend.position = "none",
-    text = element_text(size = 18),
+    # text = element_text(size = 18),
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank(),
     axis.text.x = element_text(angle = 45, hjust = 1)
@@ -1421,7 +1416,7 @@ pca_df <- pca_DMR$x
 names <- rownames(pca_df)
 # rownames(pca_df) <- NULL
 # pca_df <- cbind(names,pca_df)
-pca_out <- merge(as.data.frame(pca_df), suppl_tbl_2 %>% select(Sample, treatment_descr) %>% remove_rownames() %>% column_to_rownames(var = "Sample"), by = 0)
+pca_out <- merge(as.data.frame(pca_df), suppl_tbl_2 %>% dplyr::select(Sample, treatment_descr) %>% remove_rownames() %>% column_to_rownames(var = "Sample"), by = 0)
 pca_out$treatment_descr <- factor(pca_out$treatment_descr, levels = c("Stemi", "Nstemi", "UA", "Healthy"))
 
 # saveRDS(colnames(percMeth_ACS_DMRs_sig_lm),"/home/arathge/scripts/WGBS_vs_targeted/top_DMR_treatment.RDS")
@@ -1463,7 +1458,7 @@ Figure_5B
 
 ```{r}
 percMeth_ACS_DMRs_sig_lm_for_heat <- reshape2::melt(percMeth_ACS_DMRs_sig_lm %>% rownames_to_column("sample"))
-percMeth_ACS_DMRs_sig_lm_for_heat <- merge(as.data.frame((percMeth_ACS_DMRs_sig_lm_for_heat %>% rename("Sample" = "sample"))), suppl_tbl_2 %>% select(Sample, treatment_descr), by = "Sample")
+percMeth_ACS_DMRs_sig_lm_for_heat <- merge(as.data.frame((percMeth_ACS_DMRs_sig_lm_for_heat %>% dplyr::rename("Sample" = "sample"))), suppl_tbl_2 %>% dplyr::select(Sample, treatment_descr), by = "Sample")
 ```
 
 
@@ -1500,7 +1495,7 @@ top_DMR_treatment$DMR <- paste0(top_DMR_treatment$seqnames, ".", top_DMR_treatme
 
 
 # LM top 5 DMRs versus treatment --- methylation for plots
-perc_Meth_top5_ACS_DMRs_sig_lm <- merge(percMeth_ACS_DMRs_sig_lm %>% select(top_DMR_treatment$DMR), table_markers %>% select(Sample, treatment_descr, `CK max (U/l)`, `LVEF(%)`, `TroponinT (ng/l)`) %>% remove_rownames() %>% column_to_rownames(var = "Sample"), by = 0)
+perc_Meth_top5_ACS_DMRs_sig_lm <- merge(percMeth_ACS_DMRs_sig_lm %>% dplyr::select(top_DMR_treatment$DMR), table_markers %>% dplyr::select(Sample, treatment_descr, `CK max (U/l)`, `LVEF(%)`, `TroponinT (ng/l)`) %>% remove_rownames() %>% column_to_rownames(var = "Sample"), by = 0)
 perc_Meth_top5_ACS_DMRs_sig_lm$treatment_descr <- str_replace(perc_Meth_top5_ACS_DMRs_sig_lm$treatment_descr, "Stemi", "3")
 perc_Meth_top5_ACS_DMRs_sig_lm$treatment_descr <- str_replace(perc_Meth_top5_ACS_DMRs_sig_lm$treatment_descr, "Nstemi", "2")
 perc_Meth_top5_ACS_DMRs_sig_lm$treatment_descr <- str_replace(perc_Meth_top5_ACS_DMRs_sig_lm$treatment_descr, "UA", "1")
@@ -1519,7 +1514,7 @@ top_DMR_tropo$DMR <- paste0(top_DMR_tropo$seqnames, ".", top_DMR_tropo$start, ".
 
 
 # LM top 5 DMRs versus tropo --- methylation for plots
-perc_Meth_top5_ACS_DMRs_sig_tropo_lm <- merge(percMeth_ACS_DMRs_sig_tropo_lm %>% select(top_DMR_tropo$DMR), table_markers %>% select(Sample, treatment_descr, `CK max (U/l)`, `LVEF(%)`, `TroponinT (ng/l)`) %>% remove_rownames() %>% column_to_rownames(var = "Sample"), by = 0)
+perc_Meth_top5_ACS_DMRs_sig_tropo_lm <- merge(percMeth_ACS_DMRs_sig_tropo_lm %>% dplyr::select(top_DMR_tropo$DMR), table_markers %>% dplyr::select(Sample, treatment_descr, `CK max (U/l)`, `LVEF(%)`, `TroponinT (ng/l)`) %>% remove_rownames() %>% column_to_rownames(var = "Sample"), by = 0)
 perc_Meth_top5_ACS_DMRs_sig_tropo_lm$treatment_descr <- str_replace(perc_Meth_top5_ACS_DMRs_sig_tropo_lm$treatment_descr, "Stemi", "3")
 perc_Meth_top5_ACS_DMRs_sig_tropo_lm$treatment_descr <- str_replace(perc_Meth_top5_ACS_DMRs_sig_tropo_lm$treatment_descr, "Nstemi", "2")
 perc_Meth_top5_ACS_DMRs_sig_tropo_lm$treatment_descr <- str_replace(perc_Meth_top5_ACS_DMRs_sig_tropo_lm$treatment_descr, "UA", "1")
@@ -1535,7 +1530,7 @@ top_DMR_CK_max_LM <- rbind(top_DMR_CK_max_1, top_DMR_CK_max_2)
 top_DMR_CK_max_LM <- top_DMR_CK_max_LM[order(top_DMR_CK_max_LM$`Pr(>|t|)`, decreasing = FALSE), ]
 top_DMR_CK_max_LM$DMR <- paste0(top_DMR_CK_max_LM$seqnames, ".", top_DMR_CK_max_LM$start, ".", top_DMR_CK_max_LM$end)
 
-perc_Meth_top5_ACS_DMRs_sig_CK_max_lm <- merge(percMeth_ACS_DMRs_sig_CK_max_lm %>% select(top_DMR_CK_max_LM$DMR), table_markers %>% select(Sample, treatment_descr, `CK max (U/l)`, `LVEF(%)`, `TroponinT (ng/l)`, `CK-MB max (U/l)`) %>% remove_rownames() %>% column_to_rownames(var = "Sample"), by = 0)
+perc_Meth_top5_ACS_DMRs_sig_CK_max_lm <- merge(percMeth_ACS_DMRs_sig_CK_max_lm %>% dplyr::select(top_DMR_CK_max_LM$DMR), table_markers %>% dplyr::select(Sample, treatment_descr, `CK max (U/l)`, `LVEF(%)`, `TroponinT (ng/l)`, `CK-MB max (U/l)`) %>% remove_rownames() %>% column_to_rownames(var = "Sample"), by = 0)
 perc_Meth_top5_ACS_DMRs_sig_CK_max_lm$treatment_descr <- str_replace(perc_Meth_top5_ACS_DMRs_sig_CK_max_lm$treatment_descr, "Stemi", "3")
 perc_Meth_top5_ACS_DMRs_sig_CK_max_lm$treatment_descr <- str_replace(perc_Meth_top5_ACS_DMRs_sig_CK_max_lm$treatment_descr, "Nstemi", "2")
 perc_Meth_top5_ACS_DMRs_sig_CK_max_lm$treatment_descr <- str_replace(perc_Meth_top5_ACS_DMRs_sig_CK_max_lm$treatment_descr, "UA", "1")
@@ -1551,7 +1546,7 @@ top_DMR_CK_MB_max_LM <- rbind(top_DMR_CK_MB_max_1, top_DMR_CK_MB_max_2)
 top_DMR_CK_MB_max_LM <- top_DMR_CK_MB_max_LM[order(top_DMR_CK_MB_max_LM$`Pr(>|t|)`, decreasing = FALSE), ]
 top_DMR_CK_MB_max_LM$DMR <- paste0(top_DMR_CK_MB_max_LM$seqnames, ".", top_DMR_CK_MB_max_LM$start, ".", top_DMR_CK_MB_max_LM$end)
 
-perc_Meth_top5_ACS_DMRs_sig_CK_MB_max_lm <- merge(percMeth_ACS_DMRs_sig_CK_MB_max_lm %>% select(top_DMR_CK_MB_max_LM$DMR), table_markers %>% select(Sample, treatment_descr, `CK max (U/l)`, `LVEF(%)`, `TroponinT (ng/l)`, `CK-MB max (U/l)`) %>% remove_rownames() %>% column_to_rownames(var = "Sample"), by = 0)
+perc_Meth_top5_ACS_DMRs_sig_CK_MB_max_lm <- merge(percMeth_ACS_DMRs_sig_CK_MB_max_lm %>% dplyr::select(top_DMR_CK_MB_max_LM$DMR), table_markers %>% dplyr::select(Sample, treatment_descr, `CK max (U/l)`, `LVEF(%)`, `TroponinT (ng/l)`, `CK-MB max (U/l)`) %>% remove_rownames() %>% column_to_rownames(var = "Sample"), by = 0)
 perc_Meth_top5_ACS_DMRs_sig_CK_MB_max_lm$treatment_descr <- str_replace(perc_Meth_top5_ACS_DMRs_sig_CK_MB_max_lm$treatment_descr, "Stemi", "3")
 perc_Meth_top5_ACS_DMRs_sig_CK_MB_max_lm$treatment_descr <- str_replace(perc_Meth_top5_ACS_DMRs_sig_CK_MB_max_lm$treatment_descr, "Nstemi", "2")
 perc_Meth_top5_ACS_DMRs_sig_CK_MB_max_lm$treatment_descr <- str_replace(perc_Meth_top5_ACS_DMRs_sig_CK_MB_max_lm$treatment_descr, "UA", "1")
