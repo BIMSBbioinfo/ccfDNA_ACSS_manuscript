@@ -507,7 +507,9 @@ Figure_S2A <- ggplot(suppl_tbl_2, aes(x = Sample, y = BS_conversion_rate, fill =
   theme_Publication() +
   theme(axis.text.x = element_text(angle = 90), axis.title.x = element_blank(),
         legend.position = "none",
-        text = element_text(size = 24))
+        text = element_text(size = 24),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
 Figure_S2A
 ```
 
@@ -522,13 +524,15 @@ Figure_S2B <- ggplot(suppl_tbl_2, aes(x = Sample, y = Average_CpG_coverage, fill
         axis.title.x = element_blank(),
         legend.position = "right", 
         legend.direction = "vertical",
-        text = element_text(size = 24))
+        text = element_text(size = 24),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
 Figure_S2B
 ```
 
 
 ```{r Export_Figure_S2, fig.height = 8, fig.width = 20}
-png(file = "/local/AAkalin_cardiac/Results/cardiac/Plots/FigureS2.png",height = 8,width = 20)
+pdf(file = "/local/AAkalin_cardiac/Results/cardiac/Plots/FigureS2_t.pdf",height = 8,width = 20)
 cowplot::plot_grid(Figure_S2A, Figure_S2B, labels = "AUTO", rel_widths = c(19 / 40, 22 / 40))
 dev.off()
 ```
@@ -1691,7 +1695,8 @@ Figure_5A <- ggplot(counts, aes(x = marker, y = Percentage)) +
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank()
   ) +
-  coord_flip()
+  coord_flip()+
+  scale_y_continuous(expand = c(0.0,0))
 
 Figure_5A
 ```
@@ -1702,8 +1707,8 @@ Figure_5C <- ggarrange(Figure_5C, labels = c("C"), font.label = list(size = 30))
 
 ggsave(
   bg = "white",
-  "/local/AAkalin_cardiac/Results/cardiac/Plots/Figure5AB.pdf",
-  device = "pdf",
+  "/local/AAkalin_cardiac/Results/cardiac/Plots/Figure5AB.png",
+  device = "png",
   plot = Figure_5AB, width = 210, units = "mm", height = 130
 )
 
