@@ -207,6 +207,7 @@ Load differential methylation analysis annotations
 enrichment_all <- readRDS("/local/rcuadrat/cfdna_wgbs/tmp_dfs/enrichment_all.RDS")
 ```
 
+Load GREAT annotation from Kasia from cardiac_initial script
 ```{r Load_GREAT_Enrichment_Data}
 GREAT_myDiff25p0_01p_CpG_dT_tiles_win500bp_step500bp_batch123 <- readRDS("/local/AAkalin_cardiac/Results/cardiac/differential_methylation/GREAT_myDiff25p0_01p_CpG_dT_tiles_win500bp_step500bp_batch123.RDS")
 names(GREAT_myDiff25p0_01p_CpG_dT_tiles_win500bp_step500bp_batch123) <- c("ACS_Stemi", "ACS_Nstemi", "ACS_iAP", "CAD+posStressEcho")
@@ -1208,9 +1209,6 @@ Figure_3A <- UpSetR::upset(UpSetR::fromList(v_ACS),
   text.scale = 1.8
 )
 
-
-
-
 pdf(
   file = "/local/AAkalin_cardiac/Results/cardiac/Plots/Figure3A.pdf",
   bg = "white"
@@ -1586,7 +1584,7 @@ perc_Meth_top5_ACS_DMRs_sig_lm
 ```
 
 
-```{r Publication_Figure_5C,fig.width=20,fig.height=4}
+```{r Publication_Figure_5C,fig.width=20,fig.height=15}
 Figure_5C <- ggscatter(perc_Meth_top5_ACS_DMRs_sig_lm %>% filter(-treatment_descr != 0),
   y = "value", x = "treatment_descr",
   add = "reg.line",
@@ -1597,7 +1595,7 @@ Figure_5C <- ggscatter(perc_Meth_top5_ACS_DMRs_sig_lm %>% filter(-treatment_desc
   xlab = "Disease severity: 1 - UA, 2- NSTEMI, 3 - STEMI",
   ylab = "Methylation [%]",
   xlim = c(1, 3)
-) + facet_wrap(~variable, ncol = 5) +
+) + facet_wrap(~variable, ncol = 2) +
   scale_x_continuous(breaks = c(1, 2, 3)) +
   theme(
     text = element_text(size = 18),
@@ -1701,9 +1699,11 @@ Figure_5A <- ggplot(counts, aes(x = marker, y = Percentage)) +
 Figure_5A
 ```
 
-```{r Publication_Figure_5,}
+```{r Publication_Figure_5, fig.width=21, fig.height=10}
 Figure_5AB <- ggarrange(Figure_5A, Figure_5B, ncol = 2, nrow = 1, labels = c("A", "B"), align = "h")
-Figure_5C <- ggarrange(Figure_5C, labels = c("C"), font.label = list(size = 30))
+Figure_5C <- ggarrange(Figure_5C, labels = c("C"), font.label = list(size = 15))
+
+Figure_5ABC <- ggarrange(Figure_5AB, Figure_5C, nrow=2)
 
 ggsave(
   bg = "white",
@@ -1718,6 +1718,17 @@ ggsave(
   plot = Figure_5C,
   width = 440, units = "mm", height = 110
 )
+
+ggsave(
+  bg = "white",
+  "/local/AAkalin_cardiac/Results/cardiac/Plots/Figure5.png",
+  device = "pdf",
+  plot = Figure_5ABC, width = 210, units = "mm", height = 300
+)
+
+
+
+
 ```
 
 ```{r}
