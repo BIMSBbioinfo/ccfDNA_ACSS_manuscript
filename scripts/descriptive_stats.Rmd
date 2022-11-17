@@ -891,19 +891,6 @@ Figure3B <- ggplot(all_annot_summary_alltypes_new, aes(x = annot.type, y = n, fi
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank()
   )
-
-Figure3B <- ggarrange(Figure3B, labels = "B")
-
-ggsave(
-  bg = "white",
-  "/local/AAkalin_cardiac/Results/cardiac/Plots/Figure3B.pdf",
-  device = "pdf",
-  plot = Figure3B,
-  width = 200,
-  height = 110,
-  units = "mm"
-)
-
 Figure3B
 ```
 
@@ -1194,7 +1181,7 @@ name_gs_e <- c("Stemi", "Nstemi", "iAP", "CAD_Echo_pos", "CAD_Echo_neg")
 names(v_e) <- name_gs_e
 ```
 
-```{r}
+```{r, fig.width=21, fig.height=6}
 # Just for ACS groups with genes
 v_ACS <- list(c(g1$dmr), c(g2$dmr), c(g3$dmr))
 
@@ -1209,13 +1196,37 @@ Figure_3A <- UpSetR::upset(UpSetR::fromList(v_ACS),
   text.scale = 1.8
 )
 
-pdf(
-  file = "/local/AAkalin_cardiac/Results/cardiac/Plots/Figure3A.pdf",
-  bg = "white"
+#Upset plot could not be converted to ggplot object via ggplotify as bug in upset package, thus here workaround:
+Figure_3A_redraw <- 
+cowplot::plot_grid(
+    NULL, NULL, NULL, Figure_3A$Main_bar, 
+    NULL,NULL, NULL, NULL,
+    NULL, Figure_3A$Sizes, NULL,  Figure_3A$Matrix,
+    ncol = 4,
+                            nrow=3, align='hv', rel_heights = c(3,-0.4, 1.1),
+                           rel_widths = c(-0.5,1.5,-0.05,3))
+
+Figure3 <- cowplot::plot_grid(Figure_3A_redraw, Figure3B, rel_widths = c(1,2), labels = c("A","B"),label_size = 30)
+
+Figure3
+
+ggsave(
+  bg = "white",
+  "/local/AAkalin_cardiac/Results/cardiac/Plots/Figure3.pdf",
+  device = "pdf",
+  plot = Figure3,
+  width = 21,
+  height = 6
 )
-Figure_3A
-grid.text("A", x = 0.03, y = .97, gp = gpar(fontsize = 21, fontface = "bold"))
-dev.off()
+
+ggsave(
+  bg = "white",
+  "/local/AAkalin_cardiac/Results/cardiac/Plots/Figure3.png",
+  device = "png",
+  plot = Figure3,
+  width = 21,
+  height = 6
+)
 ```
 
 
