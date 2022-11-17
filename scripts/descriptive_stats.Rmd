@@ -1196,7 +1196,10 @@ Figure_3A <- UpSetR::upset(UpSetR::fromList(v_ACS),
   text.scale = 1.8
 )
 
-#Upset plot could not be converted to ggplot object via ggplotify as bug in upset package, thus here workaround:
+#Upset plot could not be converted to ggplot object via ggplotify as bug in upset package, thus here workaround based on
+#https://github.com/wilkelab/cowplot/issues/11#issuecomment-235643412
+#https://github.com/hms-dbmi/UpSetR/issues/105#issuecomment-571066887
+
 Figure_3A_redraw <- 
 cowplot::plot_grid(
     NULL, NULL, NULL, Figure_3A$Main_bar, 
