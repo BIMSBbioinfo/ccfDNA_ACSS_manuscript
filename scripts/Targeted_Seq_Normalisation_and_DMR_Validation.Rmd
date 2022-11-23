@@ -337,7 +337,7 @@ annotate_figure(ggarrange(p28, p29, nrow=1, ncol=2, labels="AUTO", common.legend
 ```
 
 ### Winsorization
-```{r Winsorization_Box_and Violinplots, fig.dim=c(10,10)}
+```{r Winsorization_Box_and Violinplots, fig.width=10}
 tiles <- unlist(overlap_tiles_validation_WGBS[, 1])
 
 overlap_tiles_validation_WGBS_winsorized <- as_tibble(lapply(overlap_tiles_validation_WGBS[, -1], Winsorize, probs = c(0.1, 0.9))) %>% 
@@ -372,7 +372,8 @@ p10 <- overlap_tiles_validation_WGBS_winsorized %>% ggplot(aes(x = condition, y 
   theme(plot.title = element_text(hjust = 0.5)) +
   facet_grid(seq_method ~ .)
 
-p11 <- overlap_tiles_validation_WGBS_winsorized %>% ggplot(aes(x = condition, y = perc_meth)) +
+p11 <- overlap_tiles_validation_WGBS_winsorized %>% 
+  ggplot(aes(x = condition, y = perc_meth)) +
   geom_violin(fill = "#7C7CFF") +
   ylab("Methylation [%]") +
   xlab("ACS Type") +
@@ -403,7 +404,11 @@ p13 <- overlap_tiles_validation_WGBS_winsorized %>%
   scale_fill_discrete(name = "Method") +
   theme(plot.title = element_text(hjust = 0.5))
 
-overlap_tiles_validation_WGBS_winsorized %>% ggplot(aes(x = sample_ids, y = perc_meth, fill = seq_method)) +
+overlap_tiles_validation_WGBS_winsorized %>%
+  dplyr::group_by(seq_method) %>% 
+  dplyr::arrange(sample_ids) %>% 
+  dplyr::mutate(sample_ids=factor(sample_ids)) %>% 
+  ggplot(aes(x = sample_ids, y = perc_meth, fill = seq_method)) +
   geom_violin() +
   geom_boxplot(width = 0.05) +
   ylab("Methylation [%]") +
@@ -418,7 +423,8 @@ annotate_figure(ggarrange(p12, p13, nrow=2, ncol=1, labels="AUTO"), text_grob("W
 ### Quantile Normalisation
 ```{r Quantile_normalisation }
 # Seperate targeted and WGBS data into two tibbles
-targeted_meth_perc <- overlap_tiles_validation_WGBS %>% dplyr::select((metadata %>% filter(seq_method == "targeted"))$sample_ids)
+targeted_meth_perc <- overlap_tiles_validation_WGBS %>% 
+  dplyr::select((metadata %>% filter(seq_method == "targeted"))$sample_ids)
 WGBS_meth_perc <- overlap_tiles_validation_WGBS %>% dplyr::select((metadata %>% filter(seq_method == "WGBS"))$sample_ids)
 
 # make WGBS data a vector
@@ -443,7 +449,7 @@ overlap_normalised <- overlap_normalised %>%
   mutate(treatment = as.factor(treatment))
 ```
 
-```{r Violin_and_Boxplots_Quantile_Normalisation, fig.dim=c(10,10)}
+```{r Violin_and_Boxplots_Quantile_Normalisation, fig.width=10}
 p14 <- overlap_normalised %>% ggplot(aes(x = condition, y = perc_meth, fill = seq_method)) +
   geom_boxplot() +
   ylab("Methylation [%]") +
@@ -498,7 +504,10 @@ p19 <- overlap_normalised %>%
   scale_fill_discrete(name = "Method") +
   theme(plot.title = element_text(hjust = 0.5), axis.text.x = element_text(angle = 45, vjust = 0.8, hjust = 1))
 
-overlap_normalised %>% ggplot(aes(x = sample_ids, y = perc_meth, fill = seq_method)) +
+overlap_normalised %>% dplyr::group_by(seq_method) %>% 
+  dplyr::arrange(sample_ids) %>% 
+  dplyr::mutate(sample_ids=factor(sample_ids)) %>%
+  ggplot(aes(x = sample_ids, y = perc_meth, fill = seq_method)) +
   geom_violin() +
   geom_boxplot(width = 0.05) +
   ylab("Methylation [%]") +
@@ -545,7 +554,7 @@ overlap_DM_data_normalised_mean_diff <- overlap_DM_data_normalised_mean_diff %>%
 ```
 
 Compare relationship between raw and normalised data and seq technique
-```{r Scatterplots_Raw_Data_Coverage_weighted_and_Quantile_Normalisation, fig.dim=c(10, 10) }
+```{r Scatterplots_Raw_Data_Coverage_weighted_and_Quantile_Normalisation, fig.width=10, fig.height=10 }
 
 #Calculate threshold for scatterplot
 data_for_scatterplot <- data_for_scatterplot %>% 
@@ -591,7 +600,7 @@ annotate_figure(ggarrange(p20, p21, labels="AUTO", nrow=2, ncol=1), text_grob("D
 
 #### Include weighting by coverage
 Use weighted methylation differences for WGBS data
-```{r Scatterplot_coverage_weighted_raw_data_and_combination_in_quantile_normalisation, fig.dim=c(10, 10)}
+```{r Scatterplot_coverage_weighted_raw_data_and_combination_in_quantile_normalisation,, fig.width=10, fig.height=10 }
 data_for_scatterplot <- data_for_scatterplot %>% tidyr::unite(tiles, seqnames, start, end, group, sep = ".")
 
 diff_meth_tiles <- data_for_scatterplot$tiles
@@ -1125,7 +1134,11 @@ p45 <- overlap_log_normalised_combat_no_log %>%
   scale_fill_discrete(name = "Method") +
   theme(plot.title = element_text(hjust = 0.5, face="bold"))
 
-p46 <- overlap_log_normalised_combat_no_log %>% ggplot(aes(x = sample_ids, y = perc_meth, fill = seq_method)) +
+p46 <- overlap_log_normalised_combat_no_log %>% 
+  dplyr::group_by(seq_method) %>% 
+  dplyr::arrange(sample_ids) %>% 
+  dplyr::mutate(sample_ids=factor(sample_ids)) %>%
+  ggplot(aes(x = sample_ids, y = perc_meth, fill = seq_method)) +
   geom_violin() +
   geom_boxplot(width = 0.05) +
   ylab("Methylation [%]") +
@@ -1461,8 +1474,10 @@ p66 <- compare_discovery_validation %>%
   geom_point(shape = 16, alpha=0.6, size=1) +
   geom_vline(xintercept = c(-25, 25), linetype="dotted")+
   geom_hline(yintercept = c(-25, 25), linetype="dotted")+
-  ylab("\u0394 Methylation [%]\nWGBS Discovery Cohort") +
-  xlab("\u0394 Methylation [%]\nTargeted Sequencing Validation Cohort") +
+  #ylab("\u0394 Methylation [%]\nWGBS Discovery Cohort") +
+  #xlab("\u0394 Methylation [%]\nTargeted Sequencing Validation Cohort") +
+  ylab(bquote(bold(atop(Delta~"Methylation [%]", "WGBS Discovery Cohort")))) +
+  xlab(bquote(bold(atop(Delta~"Methylation [%]", "Targeted Sequencing Validation Cohort")))) +
   #labs(title = "Log-Backtransformed, Quantile Normalised and ComBat", 
   labs(colour="DMR") +
   stat_cor(label.x =(-55) , label.y=c(-10, 0, 10), method="pearson", size=2.5)+
@@ -1471,7 +1486,8 @@ p66 <- compare_discovery_validation %>%
   xlim(-lim, lim) +
   theme(aspect.ratio = 1,
         strip.background = element_blank(),
-        panel.grid.major = element_blank())+
+        panel.grid.major = element_blank(),
+        axis.text = element_text(face="bold"))+
   scale_color_manual(values=c("#919494", "khaki3 ", "tan4"), guide = guide_legend(override.aes = list(size = 3.5, alpha=1) ))+
   facet_wrap(vars(condition))
 p66
