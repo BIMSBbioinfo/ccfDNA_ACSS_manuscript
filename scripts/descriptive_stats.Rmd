@@ -144,7 +144,7 @@ Load preparation and sequencing information
 
 ```{r Load_Clinical_Markers}
 table_markers <- readxl::read_excel("/local/AAkalin_cardiac/metadata/WGBS_ShortTableCorrelations.xlsx")
-table_markers <- merge(suppl_tbl_2, table_markers, by = "Sample")
+table_markers <- merge(suppl_tbl_2, table_markers, by = "Sample", all.x=TRUE)
 table_markers <- table_markers %>% dplyr::rename("CRP (mg/dl)" = "CRP(mg/dl_<5)", "TroponinT (ng/l)" = "TroponinThs_t1 (ng/l <14or<50)", "CK (U/l)" = "CK (U/l _<190)", "CK max (U/l)" = "CKmax(U/l_<190)", "CK-MB (U/l)" = "CK-MB(U/l <24)", "CK-MB max (U/l)" = "CK-MB_Max")
 colnames(table_markers)
 ```
@@ -1250,11 +1250,13 @@ marker_names <- c("treatment", "LVEF [%]", "CRP [mg/dl]", "TroponinT [ng/l]", "C
 LM_tests <- list()
 LM_tests_adj <- list()
 LM_tests_3 <- list()
+
 anovas <- list()
 results_lm <- list()
 summaries <- list()
 pvalues <- list()
 all_results <- list()
+
 for (n in marker_names) {
   results_lm_adj <- list()
   summaries_adj <- list()
@@ -1300,7 +1302,6 @@ for (n in marker_names) {
     pvalues_3[[i]] <- as.data.frame(summary(test3)$coefficients[, 4])
     all_results_3[[i]] <- as.data.frame(summary(test3)$coefficients)
   }
-
 
 
   # model 2, biomarkers ~ DMRs adjusting by cfDNA
@@ -1360,12 +1361,19 @@ LMs_DMRs_markers <- do.call("rbind", LM_tests_3)
 ```
 
 ```{r}
-stemi_for_merge_lm <- final_DMR_df_SDs_sorted_annotated$ACS_Stemi %>% dplyr::select(seqnames, start, end, gene, distTSS, meth.diff, qvalue, present_in_groups, enhancer_roadmap, annot.id, specific, heart_disease_related_disgenet, heart_disease_name_disgenet)
-nstemi_for_merge_lm <- final_DMR_df_SDs_sorted_annotated$ACS_Nstemi %>% dplyr::select(seqnames, start, end, gene, distTSS, meth.diff, qvalue, present_in_groups, enhancer_roadmap, annot.id, specific, heart_disease_related_disgenet, heart_disease_name_disgenet)
-UA_for_merge_lm <- final_DMR_df_SDs_sorted_annotated$ACS_iAP %>% dplyr::select(seqnames, start, end, gene, distTSS, meth.diff, qvalue, present_in_groups, enhancer_roadmap, annot.id, specific, heart_disease_related_disgenet, heart_disease_name_disgenet)
+stemi_for_merge_lm <- final_DMR_df_SDs_sorted_annotated$ACS_Stemi %>% 
+  dplyr::select(seqnames, start, end, gene, distTSS, meth.diff, qvalue, present_in_groups, enhancer_roadmap, annot.id, specific, heart_disease_related_disgenet, heart_disease_name_disgenet)
+
+nstemi_for_merge_lm <- final_DMR_df_SDs_sorted_annotated$ACS_Nstemi %>% 
+  dplyr::select(seqnames, start, end, gene, distTSS, meth.diff, qvalue, present_in_groups, enhancer_roadmap, annot.id, specific, heart_disease_related_disgenet, heart_disease_name_disgenet)
+
+UA_for_merge_lm <- final_DMR_df_SDs_sorted_annotated$ACS_iAP %>% 
+  dplyr::select(seqnames, start, end, gene, distTSS, meth.diff, qvalue, present_in_groups, enhancer_roadmap, annot.id, specific, heart_disease_related_disgenet, heart_disease_name_disgenet)
+
 stemi_for_merge_lm$group <- "Stemi"
 nstemi_for_merge_lm$group <- "NStemi"
 UA_for_merge_lm$group <- "UA"
+
 all_DMRs <- rbind(stemi_for_merge_lm, nstemi_for_merge_lm, UA_for_merge_lm)
 ```
 
