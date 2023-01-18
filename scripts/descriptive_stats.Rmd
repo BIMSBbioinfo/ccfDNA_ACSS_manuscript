@@ -238,7 +238,7 @@ methDB_DMR_validation_narrow_perc_top <- readRDS("/local/rcuadrat/cfdna_validati
 # Analysis
 ## Correlation Clinical Markers
 ```{r Calculate_Correlations_Between_Clincal_Markers}
-table_markers_ACS <- table_markers_ACS %>% dplyr::rename("ccfDNA [\u03BCg/ml]"= "ng ccfDNA /mL plasma",
+table_markers_ACS <- table_markers_ACS %>% dplyr::rename("ccfDNA [ng/ml]"= "ng ccfDNA /mL plasma",
                     "TroponinT [ng/l]" = "TroponinT (ng/l)",
                     "LVEF [%]" ="LVEF(%)",
                     "CK [U/l]" = "CK (U/l)",
@@ -249,7 +249,7 @@ table_markers_ACS <- table_markers_ACS %>% dplyr::rename("ccfDNA [\u03BCg/ml]"= 
                     )
 
 
-corr_biomarkers <- cor(table_markers_ACS %>% dplyr::select(str_sort(c("ccfDNA [\u03BCg/ml]", "CK-MB max [U/l]", "CK max [U/l]",  "CRP [mg/dl]", "LVEF [%]", "TroponinT [ng/l]", "CK [U/l]", "CK-MB [U/l]"), decreasing=FALSE)), use = "complete.obs")
+corr_biomarkers <- cor(table_markers_ACS %>% dplyr::select(str_sort(c("ccfDNA [ng/ml]", "CK-MB max [U/l]", "CK max [U/l]",  "CRP [mg/dl]", "LVEF [%]", "TroponinT [ng/l]", "CK [U/l]", "CK-MB [U/l]"), decreasing=FALSE)), use = "complete.obs")
 ```
 
 ```{r}
@@ -322,7 +322,7 @@ group.colors <- c(Healthy = "#58cc67", UA = "#cc5c58", Nstemi = "#cc9658", Stemi
 Test for association of clinical markers with ACS classification to show that new markers are required for classification
 ```{r}
 ## Use multinomial log-linear models via neural networks
-clinical_markers <- str_sort(c("ccfDNA [\u03BCg/ml]", "CK [U/l]", "CK max [U/l]", "CK-MB [U/l]", "CK-MB max [U/l]", "CRP [mg/dl]", "LVEF [%]", "TroponinT [ng/l]"), decreasing = FALSE)
+clinical_markers <- str_sort(c("ccfDNA [ng/ml]", "CK [U/l]", "CK max [U/l]", "CK-MB [U/l]", "CK-MB max [U/l]", "CRP [mg/dl]", "LVEF [%]", "TroponinT [ng/l]"), decreasing = FALSE)
 misclassification_rates <-c()
 
 for (marker in clinical_markers){
@@ -353,7 +353,7 @@ for (marker in clinical_markers){
 
 names(misclassification_rates)<-clinical_markers
 misclassification_rates <- as_tibble(misclassification_rates, rownames = "Marker")
-misclassification_rates$Marker <- factor(misclassification_rates$Marker, levels =str_sort(c("ccfDNA [\u03BCg/ml]", "CK [U/l]", "CK max [U/l]", "CK-MB [U/l]", "CK-MB max [U/l]", "CRP [mg/dl]", "LVEF [%]", "TroponinT [ng/l]"), decreasing = TRUE))
+misclassification_rates$Marker <- factor(misclassification_rates$Marker, levels =str_sort(c("ccfDNA [ng/ml]", "CK [U/l]", "CK max [U/l]", "CK-MB [U/l]", "CK-MB max [U/l]", "CRP [mg/dl]", "LVEF [%]", "TroponinT [ng/l]"), decreasing = TRUE))
                                          
                                          
 Figure1B <- ggplot(misclassification_rates, aes(y = Marker, x = value)) +
@@ -549,7 +549,7 @@ Figure1A <- ggplot(suppl_tbl_2, aes(x = as.factor(treatment_descr), y = cfDNA_ug
   geom_boxplot(alpha = 0.9) +
   geom_jitter(shape = 16, position = position_jitter(0.2)) +
   xlab("") +
-  ylab(expression("ccfDNA ["*mu*"g/ml]") )+
+  ylab("ccfDNA [ng/ml]")+
   scale_fill_Publication() +
   theme_Publication() +
   theme(
@@ -1271,7 +1271,7 @@ for (n in marker_names) {
   test_anova <- list()
 
   # LM testing biomarkers ~ ccDNA
-  test <- lm(DMR_percMeth_ACS_markers[[n]] ~ DMR_percMeth_ACS_markers$`ccfDNA [<U+03BC>g/ml]`)
+  test <- lm(DMR_percMeth_ACS_markers[[n]] ~ DMR_percMeth_ACS_markers$`ccfDNA [ng/ml]`)
 
   results_lm[[n]] <- test
   summaries[[n]] <- summary(test)
@@ -1279,10 +1279,10 @@ for (n in marker_names) {
   all_results[[n]] <- as.data.frame(summary(test)$coefficients)
 
   for (i in dmr_names) {
-    # tmp <- DMR_percMeth_ACS_markers %>% select( all_of(n), all_of(i),`ccfDNA [<U+03BC>g/ml]` )
+    # tmp <- DMR_percMeth_ACS_markers %>% select( all_of(n), all_of(i),`ccfDNA [ng/ml]` )
 
     # LM biomarkers ~ methylation DMRs + cfDNA
-    test2 <- lm(DMR_percMeth_ACS_markers[[n]] ~ DMR_percMeth_ACS_markers[[i]] + scale(DMR_percMeth_ACS_markers$`ccfDNA [<U+03BC>g/ml]`))
+    test2 <- lm(DMR_percMeth_ACS_markers[[n]] ~ DMR_percMeth_ACS_markers[[i]] + scale(DMR_percMeth_ACS_markers$`ccfDNA [ng/ml]`))
     # LM biomarkers ~ methylation
     test3 <- lm(DMR_percMeth_ACS_markers[[n]] ~ DMR_percMeth_ACS_markers[[i]])
 
@@ -1307,7 +1307,7 @@ for (n in marker_names) {
   # model 2, biomarkers ~ DMRs adjusting by cfDNA
   test_all_adj <- do.call("rbind", all_results_adj)
   test_all_adj <- test_all_adj[!grepl("Intercept", row.names(test_all_adj)), ]
-  test_all_adj <- test_all_adj[!grepl("ccfDNA [<U+03BC>g/ml]", row.names(test_all_adj)), ]
+  test_all_adj <- test_all_adj[!grepl("ccfDNA [ng/ml]", row.names(test_all_adj)), ]
   test_all_adj <- tibble::rownames_to_column(as.data.frame(test_all_adj), var = "DMR")
   test_all_adj <- test_all_adj %>% separate(DMR, c("DMR", "marker"), ".DMR_")
   # test_all_adj$marker=str_replace(test_all_adj$marker,"\\$\\`","")
