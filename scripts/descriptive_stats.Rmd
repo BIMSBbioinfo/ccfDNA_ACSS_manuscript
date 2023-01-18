@@ -1381,6 +1381,14 @@ all_DMRs <- rbind(stemi_for_merge_lm, nstemi_for_merge_lm, UA_for_merge_lm)
 treat_LM <- LM_tests_adj$treatment
 top_DMR_treatment <- treat_LM[order(treat_LM$`Pr(>|t|)`, decreasing = FALSE), ][1:5, ]
 top_DMR_treatment <- top_DMR_treatment %>% separate(DMR, c("seqnames", "start", "end"), "\\.")
+
+narrow_DMR <- treat_LM %>% 
+  tidyr::separate(DMR, c("chrom", "start", "end", "suffix"), sep="\\.") %>% 
+  dplyr::filter(is.na(suffix)) %>%
+  dplyr::select(-suffix) %>% 
+  tidyr::unite(DMR, chrom, start, end, sep=".")
+
+#saveRDS(narrow_DMR, "/local/rcuadrat/cfdna_wgbs/narrow_DMRs.RDS")
 ```
 
 ```{r}
@@ -1443,7 +1451,7 @@ names <- rownames(pca_df)
 pca_out <- merge(as.data.frame(pca_df), suppl_tbl_2 %>% dplyr::select(Sample, treatment_descr) %>% remove_rownames() %>% column_to_rownames(var = "Sample"), by = 0)
 pca_out$treatment_descr <- factor(pca_out$treatment_descr, levels = c("Stemi", "Nstemi", "UA", "Healthy"))
 
-# saveRDS(colnames(percMeth_ACS_DMRs_sig_lm),"/home/arathge/scripts/WGBS_vs_targeted/top_DMR_treatment.RDS")
+# saveRDS(colnames(percMeth_ACS_DMRs_sig_lm),"/local/AAkalin_cardiac/Results/cardiac/RDS/top_DMR_treatment.RDS")
 ```
 
 ```{r}
