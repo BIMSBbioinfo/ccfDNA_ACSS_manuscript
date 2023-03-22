@@ -77,9 +77,7 @@ The main content of each script is stated below:
 
 
 ## **Data availability**
-All raw **methylKit objects** (tabix format) for the discovery and validation 
-cohort can be downloaded from the respective files provided in the "data" folder 
-within this repository. **bigwig** files are also available from the respective file 
-for the discovery cohort only, however.
+Download links for raw **methylKit objects** (tabix format) are provided for the [discovery](data/methylKit_objects_discovery_cohort.tsv) and [validation cohort](data/methylKit_objects_validation_cohort.tsv).
+Links to **BigWig** files are available for the [discovery cohort](data/bigwig_files_discovery_cohort.tsv).
 
 
