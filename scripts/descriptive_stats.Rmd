@@ -153,7 +153,7 @@ Load clinical markers
 
 ```{r Export_Supplementary_Table_1}
 Table_S1 <- table_markers %>%
-  dplyr::select(!"total_amount_cfDNA_ug") %>%
+  dplyr::select(!c("total_amount_cfDNA_ug", "total_amount_cfDNA_ug")) %>%
   dplyr::rename(
     "Condition" = "treatment_descr",
     "Condition group" = "treatment",
@@ -184,7 +184,12 @@ Table_S1 <- table_markers %>%
   dplyr::mutate(Condition = fct_recode(Condition,
     NSTEMI = "Nstemi",
     STEMI = "Stemi"
-  ))
+  )) %>%
+  dplyr::mutate(`Sequencing method`= c(
+  rep("WGBS", 29
+      ))) %>%
+  dplyr::relocate(`Sequencing method`, .after = `Condition group`)
+
 
 write_tsv(Table_S1, file = "/local/AAkalin_cardiac/metadata/Supplementary_Table_1_Clinical_and_Metadata.tsv")
 
