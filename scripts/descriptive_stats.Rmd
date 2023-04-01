@@ -1394,6 +1394,8 @@ narrow_DMR <- treat_LM %>%
   tidyr::unite(DMR, chrom, start, end, sep=".")
 
 #saveRDS(narrow_DMR, "/local/rcuadrat/cfdna_wgbs/narrow_DMRs.RDS")
+#write_tsv(narrow_DMRs %>% dplyr::select(DMR), file = "/local/AAkalin_cardiac/metadata/Supplementary_Table_4_Disease_distinguishing_DMRs.tsv")
+
 ```
 
 ```{r}

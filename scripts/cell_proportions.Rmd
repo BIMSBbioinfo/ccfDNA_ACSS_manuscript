@@ -70,7 +70,7 @@ treatment_descr=c(
   rep("CAD+posStressEcho+pos",3)
 )
 
-probes = readRDS("~/illumina_probes_hg38_GRanges.RDS")
+probes = readRDS("/local/AAkalin_cardiac/Results/cardiac/from-rafael/illumina_probes_hg38_GRanges.RDS")
 refExtended = read.csv("/local/agosdsc/projects/AAkalin_cfdTissue/results/extendedReference.csv")
 suppl_tbl_2<-readRDS("/local/rcuadrat/cfdna_wgbs/suppl_tbl_2.RDS")
 methT.path = '/local/AAkalin_cardiac/Results/cardiac/06_methyl_calls_bwameth/tileMethylCounts/methylBase_CpG_dT_tiles_win500bp_step500bp_123batch_v1.txt.bgz'
@@ -79,7 +79,7 @@ meth.deT=methylKit:::readMethylBaseDB(methT.path,"tabix",
                                       "region",treatment =  treatment1,TRUE,skip=0)
 
 desc<-data.frame(treatment1,treatment_descr,sample_ids)
-desc<-desc %>% rename("treatment"="treatment1")
+desc<-desc %>% dplyr::rename("treatment"="treatment1")
 desc<-unique(desc)
 desc$treatment_descr <- gsub("iAP","UA",desc$treatment_descr)
 ```
@@ -184,7 +184,7 @@ meth.deT=methylKit:::readMethylBaseDB(methT.path,"tabix",
                                       "region",treatment =  treatment1,TRUE,skip=0)
 
 desc<-data.frame(treatment1,treatment_descr,sample_ids)
-desc<-desc %>% rename("treatment"="treatment1")
+desc<-desc %>% dplyr::rename("treatment"="treatment1")
 desc<-unique(desc)
 desc$treatment_descr <- gsub("iAP","UA",desc$treatment_descr)
 ```
@@ -202,7 +202,6 @@ Prediction of cell-type proportions of bulk methylation profiles, as well as par
 ```{r Cell_type_prediction}
 meth.deT@treatment=treatment1
 mapping = deconvR::BSmeth2Probe(probe_id_locations = probes, WGBS_data = meth.deT)
-
 
 
 decon_nnls_extended = deconvR::deconvolute(reference=refExtended, bulk=mapping, model="nnls")
@@ -241,12 +240,15 @@ decon_nnls_extended_tgs.m$treatment_descr <- factor(decon_nnls_extended_tgs.m$tr
 saveRDS(decon_nnls_extended_tgs.m,"../Results/cardiac/RDS/decon_cell_proportions.RDS")
 ```
 
+Export raw cell proportion values
+
 Merge metadata with cell type proportion results
 ```{r Merge_metadata_with_results}
 tbl_2 <- suppl_tbl_2 %>%
   dplyr::select(Sample, cfDNA_ug_per_ml_plasma) %>%
-  rename(
-    samples_id = Sample
+  dplyr::rename(
+    samples_id = Sample,
+    cfDNA_ng_per_ml_plasma =cfDNA_ug_per_ml_plasma
   )
 decon_nnls_extended_tgs.m_normalized <- decon_nnls_extended_tgs.m
 decon_nnls_extended_tgs.m_normalized <- left_join(decon_nnls_extended_tgs.m_normalized, tbl_2, by = "samples_id")
@@ -260,8 +262,14 @@ Plot results
 # bp_decon_nnls_extended + ggplot2::theme(legend.text=element_text(size=14),axis.text.x = ggplot2::element_text(size=14),axis.text.y = ggplot2::element_text(size=14), plot.title = ggplot2::element_text(size=14)) + ggplot2::labs(fill="Treatment",x = "Cell Type", y = "Proportion of Sample") + coord_flip()
 ```
 
-Exclude non-haematological cell types and normalised data by amount of ccfDNA
+Normalise data by amount of ccfDNA and exclude non-haematological cell types
 ```{r}
+decon_nnls_extended_tgs.m_normalized$value = decon_nnls_extended_tgs.m_normalized$value * decon_nnls_extended_tgs.m_normalized$cfDNA_ng_per_ml_plasma
+decon_nnls_extended_tgs.m_normalized$method <- "ccfDNA (ng/ml of plasma)"
+
+
+
+
 decon_nnls_extended_tgs.m_normalized <-decon_nnls_extended_tgs.m_normalized %>% filter(variable != "Adipocytes" & 
                                          variable != "Lung_cells" & 
                                          variable != "Pancreatic_beta_cells" & 
@@ -277,46 +285,44 @@ decon_nnls_extended_tgs.m_normalized <-decon_nnls_extended_tgs.m_normalized %>% 
                                          variable != "Uterus_cervix"
                                          )
 
-decon_nnls_extended_tgs.m_normalized$value = decon_nnls_extended_tgs.m_normalized$value * decon_nnls_extended_tgs.m_normalized$cfDNA_ug_per_ml_plasma
-decon_nnls_extended_tgs.m_normalized$method <- "ccfDNA (μg/ml of plasma)"
+
 ```
 
 Exclude non-haematological cell types
 ```{r Exclude_celltypes}
-decon_nnls_extended_tgs.m_short <-decon_nnls_extended_tgs.m %>% filter(variable != "Adipocytes" & 
-                                         variable != "Lung_cells" & 
-                                         variable != "Pancreatic_beta_cells" & 
-                                         variable != "Pancreatic_acinar_cells"	 &
-                                         variable != "Pancreatic_duct_cells" &
-                                         variable != "Colon_epithelial_cells" &
-                                         variable != "Head_and_neck_larynx" &
-                                         variable != "Prostate" &
-                                         variable != "Upper_GI" &
-                                         variable != "Left_atrium" &
-                                         variable != "right_atrium_auricular_region" &
-                                         variable != "Breast" &
-                                         variable != "Uterus_cervix"
-                                         )
+decon_nnls_extended_tgs.m_short <- decon_nnls_extended_tgs.m %>% filter(variable != "Adipocytes" &
+  variable != "Lung_cells" &
+  variable != "Pancreatic_beta_cells" &
+  variable != "Pancreatic_acinar_cells" &
+  variable != "Pancreatic_duct_cells" &
+  variable != "Colon_epithelial_cells" &
+  variable != "Head_and_neck_larynx" &
+  variable != "Prostate" &
+  variable != "Upper_GI" &
+  variable != "Left_atrium" &
+  variable != "right_atrium_auricular_region" &
+  variable != "Breast" &
+  variable != "Uterus_cervix")
 
-decon_nnls_extended_tgs.m_short$value = decon_nnls_extended_tgs.m_short$value * 100
+decon_nnls_extended_tgs.m_short$value <- decon_nnls_extended_tgs.m_short$value * 100
 decon_nnls_extended_tgs.m_short$method <- "% of cell/tissue"
 
-decon_nnls_extended_all_short<-rbind(decon_nnls_extended_tgs.m_short,decon_nnls_extended_tgs.m_normalized %>% dplyr::select(-cfDNA_ug_per_ml_plasma))
-decon_nnls_extended_all_short$treatment_descr <- factor(decon_nnls_extended_all_short$treatment_descr , levels=c("Stemi", "Nstemi", "UA","Healthy"))
+decon_nnls_extended_all_short <- rbind(decon_nnls_extended_tgs.m_short, decon_nnls_extended_tgs.m_normalized %>% dplyr::select(-cfDNA_ng_per_ml_plasma))
+decon_nnls_extended_all_short$treatment_descr <- factor(decon_nnls_extended_all_short$treatment_descr, levels = c("Stemi", "Nstemi", "UA", "Healthy"))
 
-#specify cell types more specifically
-decon_nnls_extended_all_short_even_shorter <-decon_nnls_extended_all_short %>% filter(variable =="Vascular_endothelial_cells" | variable =="heart_left_ventricle" | variable =="Erythrocyte_progenitors" | variable =="coronary_artery" | variable =="Monocytes_EPIC"  | variable == "CD4T.cells_EPIC" | variable == "NK.cells_EPIC" | variable =="Kidney" | variable == "Neutrophils_EPIC" | variable =="Hepatocytes")
-decon_nnls_extended_all_short_even_shorter$variable <-str_replace(decon_nnls_extended_all_short_even_shorter$variable,"_EPIC","")
-decon_nnls_extended_all_short_even_shorter$variable <-str_replace(decon_nnls_extended_all_short_even_shorter$variable,"_"," ")
-decon_nnls_extended_all_short_even_shorter$variable <-str_replace(decon_nnls_extended_all_short_even_shorter$variable,".cells","")
-decon_nnls_extended_all_short_even_shorter$variable <-str_replace(decon_nnls_extended_all_short_even_shorter$variable,"_"," ")
+# specify cell types more specifically
+decon_nnls_extended_all_short_even_shorter <- decon_nnls_extended_all_short %>% filter(variable == "Vascular_endothelial_cells" | variable == "heart_left_ventricle" | variable == "Erythrocyte_progenitors" | variable == "coronary_artery" | variable == "Monocytes_EPIC" | variable == "CD4T.cells_EPIC" | variable == "NK.cells_EPIC" | variable == "Kidney" | variable == "Neutrophils_EPIC" | variable == "Hepatocytes")
+decon_nnls_extended_all_short_even_shorter$variable <- str_replace(decon_nnls_extended_all_short_even_shorter$variable, "_EPIC", "")
+decon_nnls_extended_all_short_even_shorter$variable <- str_replace(decon_nnls_extended_all_short_even_shorter$variable, "_", " ")
+decon_nnls_extended_all_short_even_shorter$variable <- str_replace(decon_nnls_extended_all_short_even_shorter$variable, ".cells", "")
+decon_nnls_extended_all_short_even_shorter$variable <- str_replace(decon_nnls_extended_all_short_even_shorter$variable, "_", " ")
 decon_nnls_extended_all_short_even_shorter
 
-saveRDS(decon_nnls_extended_all_short,"decon_nnls_extended_all_short.RDS")
+saveRDS(decon_nnls_extended_all_short, "decon_nnls_extended_all_short.RDS")
 ```
 
 ```{r}
-decon_nnls_extended_all_short_even_shorter %>%
+decon_nnls_extended_all_short_even_shorter<-decon_nnls_extended_all_short_even_shorter %>%
   mutate(
     variable = str_to_title(variable),
     treatment_descr = fct_recode(treatment_descr,
@@ -325,6 +331,28 @@ decon_nnls_extended_all_short_even_shorter %>%
     )
   )
 ```
+
+Export Supplementary Table 3
+```{r}
+
+# decon_nnls_extended_all_short_even_shorter <- decon_nnls_extended_all_short_even_shorter %>% dplyr::rename( Sample = samples_id,
+#                                                               `Cell type` = variable,
+#                                                               `Percentage` = value,
+#                                                               `Condition group` = treatment,
+#                                                               `Condition`  = treatment_descr
+#                                                               ) %>% 
+#   dplyr::select(-method) %>% 
+#   dplyr::mutate(
+#     `Cell type` = case_when (`Cell type` == "B" ~ "B-Cells",
+#                           `Cell type` == "Cd4t" ~ "CD4 T-Cells",
+#                           `Cell type` == "Cd8t" ~ "CD8 T-Cells",
+#                           `Cell type` == "Head And Neck_larynx" ~ "Head And Neck Larynx",
+#                           `Cell type` == "Nk" ~ "NK-Cells",
+#                           TRUE ~ `Cell type`))
+# write_tsv(decon_nnls_extended_all_short_even_shorter, file = "/local/AAkalin_cardiac/metadata/Supplementary_Table_3_Cell_Proportions.tsv")
+
+```
+
 
 # Plotting
 
@@ -339,11 +367,11 @@ Figure_2 <-
       variable == "NK" ~ "NK cells",
       variable == "Vascular endothelial" ~ "Vascular endothelial cells",
       TRUE ~ variable
-    ),
-    treatment_descr = fct_recode(treatment_descr,
-      "STEMI" = "Stemi",
-      "NSTEMI" = "Nstemi"
-    )
+    ) #,
+    # treatment_descr = fct_recode(treatment_descr,
+    #   "STEMI" = "Stemi",
+    #   "NSTEMI" = "Nstemi"
+    # )
   ) %>%
   filter(method == "% of cell/tissue") %>%
   ggplot(ggplot2::aes(x = variable, y = value, fill = factor(treatment_descr))) +
@@ -360,7 +388,7 @@ Figure_2 <-
     panel.grid.minor = element_blank(),
     strip.background = element_blank()
   ) +
-  labs(fill = "Group", x = "treatment_descr", y = "Predicted origin of ccfDNA [%]") +
+  labs(fill = "Group", x = "treatment_descr", y = "Predicted origin of ccfDNA \n[% cells normalised by ccfDNA amount]") +
   facet_wrap(~variable, scale = "free", ncol = 5, labeller = label_wrap_gen(width = 15), strip.position = "top")
 
 ggsave(

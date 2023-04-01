@@ -96,6 +96,20 @@ suppl_tbl_2 <- readRDS("/local/rcuadrat/cfdna_wgbs/suppl_tbl_2.RDS")
 clinical_markers<-merge(suppl_tbl_2,clinical_markers,by="Sample")
 #clinical_markers = clinical_markers %>% rename("CRP (mg/dl)"="CRP(mg/dl_<5)","TroponinT (ng/l)"="TroponinThs_t1 (ng/l <14or<50)","CK (U/l)"="CK (U/l _<190)","CK max (U/l)"="CKmax(U/l_<190)","CK-MB (U/l)"="CK-MB(U/l <24)","CK-MB max (U/l)"="CK-MB_Max")
 clinical_markers_ACS<-clinical_markers %>% filter(treatment !=0)
+
+#Export significant methylation values for Supplementary Table 5
+methylDiff_WGBS_exp <- methylDiff_WGBS %>%
+  map(~ tidyr::separate(., tiles, into = c("Chromosome", "Start", "End", "Condition")) %>%
+    dplyr::rename(
+      "Width" = width,
+      "Strand" = strand,
+      "p-value" = pvalue,
+      "q-value" = qvalue,
+      "Methylation difference" = meth.diff
+    )) %>% 
+  bind_rows()
+
+write_tsv(methylDiff_WGBS_exp, file = "/local/AAkalin_cardiac/metadata/Supplementary_Table_5_Significant_DMRs.tsv")
 ```
 
 ## Analysis
@@ -115,14 +129,14 @@ metadata <- metadata %>%
 
 ```{r Inspect_loci_of_WGS_and targeted_seq data, echo=FALSE}
 
-# tile_loci=list(rownames(meth_perc_all_tiles_validation), rownames(meth_perc_all_tiles_WGBS)) %>%
-#       set_names(c("target","WGBS")) %>%
-#     map_dfr(enframe, .id="seq") %>%
-#     separate(value, into=c("chrom","start","end"),sep="\\.")
+tile_loci=list(rownames(meth_perc_all_tiles_validation), rownames(meth_perc_all_tiles_WGBS)) %>%
+      set_names(c("target","WGBS")) %>%
+    map_dfr(enframe, .id="seq") %>%
+    separate(value, into=c("chrom","start", "end"),sep="\\.")
 
-# tile_loci %>%
-#   arrange(chrom, start, seq) %>%
-#   head(n=50)
+tile_loci %>%
+  arrange(chrom, start, seq) %>%
+  head(n=50)
 ```
 
 ```{r Overlap_and_Difference_between_data_set_tiles}
@@ -775,7 +789,7 @@ p32 <- autoplot(prcomp(overlap_log_pca %>%
                         #  colour = seq_method), 
       #      check_overlap = TRUE, 
        #     nudge_y = 0.02) +
-  scale_colour_manual(values = c("darkorchid4", "darkturquoise")) +
+  scale_colour_manual(values = c("#F8766D", "darkturquoise")) +
   theme_bw() +
   theme(plot.title = element_text(hjust = 0.5, 
                                   face = "bold", 
@@ -1075,7 +1089,7 @@ overlap_log_normalised_combat_no_log <- overlap_log_normalised_combat %>%
 ```
 
 #### Plot %Methylation per condition group
-```{r Box_and_violinplots_for_backtransformed_normalised_and_combat_transformed_data, fig.dim=c(10,10)}
+```{r Box_and_violinplots_for_backtransformed_normalised_and_combat_transformed_data, fig.width=10, fig.height=5}
 p40 <- overlap_log_normalised_combat_no_log %>% ggplot(aes(x = condition, y = perc_meth, fill = seq_method)) +
   geom_boxplot() +
   ylab("Methylation [%]") +
@@ -1708,7 +1722,7 @@ overlap_DM_log_normalised_combat_log_fold_change_no_log_weighted <- overlap_log_
   tidyr::unite(tiles, chrom, start, end, sep=".")
 ```
 
-```{r Plot_weighted_difference_of_means_after_quantile_normalisation_combat_and_backtransformation, fig.dim = c(10,10)}
+```{r Plot_weighted_difference_of_means_after_quantile_normalisation_combat_and_backtransformation, fig.width=15, fig.height=11}
 #Calculate threshold 
 overlap_log_normalised_combat_no_log_weighted <- overlap_log_normalised_combat_no_log_weighted %>% 
   mutate(threshold_25= case_when((((25 <= weighted.meth.diff.WGBS) & (25 <= weighted.meth.diff.targeted))  | (((weighted.meth.diff.targeted <=-25) & (weighted.meth.diff.WGBS <=-25))) ) ~ "|25%|", TRUE ~ "not in range"))
@@ -1823,6 +1837,23 @@ add_metadata_matrix <- function(mx, metadata_df) {
 }
 ```
 
+```{r fig.width=8, fig.height=5}
+overlap_log_combat %>%
+  tidyr::pivot_longer(-c(sample_ids, seq_method, condition), names_to = "tiles", values_to = "perc_meth") %>% 
+  dplyr::mutate(perc_meth= e_fun(perc_meth)) %>%
+  dplyr::group_by(seq_method) %>% 
+  dplyr::arrange(sample_ids) %>% 
+  dplyr::mutate(sample_ids=factor(sample_ids)) %>% 
+  ggplot(aes(x = sample_ids, y = perc_meth, fill = seq_method)) +
+  geom_violin() +
+  geom_boxplot(width = 0.05) +
+  ylab("Methylation [%]") +
+  xlab("Sample") +
+  labs(title = "Backtransformed ComBat Data\nAll Common Tiles") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold", size=16), axis.text.x = element_text(angle = 45, vjust = 0.8, hjust = 1))
+```
+
 #### PCA on log transformed and combat data seperate condition all common tiles
 ```{r PCA_log_transformed_and_comBat, message=FALSE, warning=FALSE, error=FALSE, message=FALSE}
 overlap_grouped_log_combat <- overlap_grouped_log %>%
@@ -1919,7 +1950,7 @@ p38
 ```
 
 #### Overview Plot: PCA Grid all common tiles
-```{r Make_PCA_grid, fig.dim=c(10,7.5)}
+```{r Make_PCA_grid, fig.heigth=17, fig.width=13}
 data <- list("Log" = overlap_grouped_log_pca, "ComBat"=overlap_grouped_log_combat, "Quantile Normalisation \n+ ComBat" = overlap_grouped_log_normalised_combat_pca) %>%
   map(bind_rows, .id = "condition2") %>%
   map(~ bind_cols(
