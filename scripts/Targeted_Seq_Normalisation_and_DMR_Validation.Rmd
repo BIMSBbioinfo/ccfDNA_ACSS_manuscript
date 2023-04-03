@@ -1859,7 +1859,7 @@ overlap_log_combat %>%
 ```
 
 #### PCA on log transformed and combat data seperate condition all common tiles
-```{r PCA_log_transformed_and_comBat, message=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+```{r PCA_log_transformed_and_comBat, error=FALSE, message=FALSE, warning=FALSE}
 overlap_grouped_log_combat <- overlap_grouped_log %>%
   map(~ long_df_to_matrix(.) %>%
   sva::ComBat(dat = ., batch = batch[colnames(.)]) %>%  
