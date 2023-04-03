@@ -1841,22 +1841,6 @@ add_metadata_matrix <- function(mx, metadata_df) {
 }
 ```
 
-```{r fig.width=8, fig.height=5}
-overlap_log_combat %>%
-  tidyr::pivot_longer(-c(sample_ids, seq_method, condition), names_to = "tiles", values_to = "perc_meth") %>% 
-  dplyr::mutate(perc_meth= e_fun(perc_meth)) %>%
-  dplyr::group_by(seq_method) %>% 
-  dplyr::arrange(sample_ids) %>% 
-  dplyr::mutate(sample_ids=factor(sample_ids)) %>% 
-  ggplot(aes(x = sample_ids, y = perc_meth, fill = seq_method)) +
-  geom_violin() +
-  geom_boxplot(width = 0.05) +
-  ylab("Methylation [%]") +
-  xlab("Sample") +
-  labs(title = "Backtransformed ComBat Data\nAll Common Tiles") +
-  scale_fill_discrete(name = "Method") +
-  theme(plot.title = element_text(hjust = 0.5, face="bold", size=16), axis.text.x = element_text(angle = 45, vjust = 0.8, hjust = 1))
-```
 
 #### PCA on log transformed and combat data seperate condition all common tiles
 ```{r PCA_log_transformed_and_comBat, error=FALSE, message=FALSE, warning=FALSE}
@@ -1885,6 +1869,24 @@ overlap_log_combat <- overlap_log %>%
   long_df_to_matrix() %>%
   ComBat(dat = ., batch = batch[colnames(.)]) %>%
   add_metadata_matrix(metadata_df = metadata)
+```
+
+
+```{r fig.width=8, fig.height=5}
+overlap_log_combat %>%
+  tidyr::pivot_longer(-c(sample_ids, seq_method, condition), names_to = "tiles", values_to = "perc_meth") %>% 
+  dplyr::mutate(perc_meth= e_fun(perc_meth)) %>%
+  dplyr::group_by(seq_method) %>% 
+  dplyr::arrange(sample_ids) %>% 
+  dplyr::mutate(sample_ids=factor(sample_ids)) %>% 
+  ggplot(aes(x = sample_ids, y = perc_meth, fill = seq_method)) +
+  geom_violin() +
+  geom_boxplot(width = 0.05) +
+  ylab("Methylation [%]") +
+  xlab("Sample") +
+  labs(title = "Backtransformed ComBat Data\nAll Common Tiles") +
+  scale_fill_discrete(name = "Method") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold", size=16), axis.text.x = element_text(angle = 45, vjust = 0.8, hjust = 1))
 ```
 
 ```{r}
