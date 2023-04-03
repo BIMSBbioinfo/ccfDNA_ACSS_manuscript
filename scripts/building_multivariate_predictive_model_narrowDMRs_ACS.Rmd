@@ -1,0 +1,768 @@
+---
+title: "Building Multivariate Predictive Model ACS"
+author: "Alexander Blume"
+output: html_notebook
+---
+
+# Goal 
+
+The goal of this report is to build a random forest model to test multivariate predictive power of the 254 from the discovery analysis.
+
+```{r Specify_Publication_Theme}
+theme_Publication <- function(base_size = 14, base_family = "sans") {
+  (ggthemes::theme_foundation(base_size = base_size, base_family = base_family)
+  + theme(
+      plot.title = element_text(
+        face = "bold",
+        size = rel(1.2), hjust = 0.5, margin = margin(0, 0, 20, 0)
+      ),
+      text = element_text(),
+      panel.background = element_rect(colour = NA),
+      plot.background = element_rect(colour = NA),
+      panel.border = element_rect(colour = NA),
+      axis.title = element_text(face = "bold", size = rel(1)),
+      axis.title.y = element_text(angle = 90, vjust = 2),
+      axis.title.x = element_text(vjust = -0.2),
+      axis.text.x = element_text(angle=45, hjust=1),
+      axis.text.y = element_text(),
+      axis.line.x = element_line(colour = "black"),
+      axis.line.y = element_line(colour = "black"),
+      axis.ticks = element_line(),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      legend.key = element_rect(colour = NA),
+      legend.position = "bottom",
+      legend.direction = "horizontal",
+      legend.box = "vertical",
+      legend.key.size = unit(0.5, "cm"),
+      #legend.margin = unit(0, "cm"),
+      legend.title = element_text(face = "italic"),
+      plot.margin = unit(c(10, 5, 5, 5), "mm"),
+      strip.background = element_blank(),
+      strip.text = element_text(face = "bold")
+    ))
+}
+
+scale_fill_Publication <- function(...) {
+  discrete_scale("fill", "Publication", manual_pal(values = c("#A6D854", "#FFD92F","#66C2A5",  "#7570B3", "#E7298A", "#66A61E", "#E6AB02", "#A6761D", "#666666")), ...)
+}
+```
+
+```{r}
+# multiclass ROC curves by One-vs-Rest approach
+# idea from https://towardsdatascience.com/multiclass-classification-evaluation-with-roc-curves-and-roc-auc-294fd4617e3a
+library(pROC)
+.ovr_roc <- function(x, classes, label,  pred, prob) {
+  levels(label)[levels(label) != classes[x]] <- "Other"
+  label <- relevel(label, classes[x])
+  
+  levels(pred)[levels(pred) != classes[x]] <- "Other"
+  pred <- relevel(pred, classes[x])
+  
+  
+  result.roc <- roc(as.numeric(label), as.numeric(pred))# Draw ROC curve.
+  plot(result.roc, print.thres="best", print.thres.best.method="closest.topleft", print.auc=TRUE)
+  title(main = paste("ROC AUC OvR:",classes[x]))
+  
+  hist(prob[,x], breaks = seq(0,1, 0.1), xlim = c(0,1) ,col = "white",border = FALSE, xlab = sprintf("P( X = %s)", classes[x]), main = NULL)
+  hist(prob[pred != classes[x],x],  breaks = seq(0,1, 0.1), col = rgb(0,0,1,2/4), add = TRUE)
+  hist(prob[pred == classes[x],x],  breaks = seq(0,1, 0.1), col = rgb(0,1,0,2/4), add = TRUE)
+  legend("topright", legend = c(classes[x], "Other"), fill = c( rgb(0,1,0,2/4),rgb(0,0,1,2/4)))
+  title(main = paste("Prediction Probabilities:", classes[x]))
+}
+```
+
+# Load Libraries
+```{r Load_Libraries}
+library(methylKit)
+library(ggplot2)
+library(ggfortify)
+library(ggthemes)
+library(tidyverse)
+library(caret)
+library(preprocessCore)
+library(sva)
+```
+
+# Load Data
+```{r}
+#this is DMRs that came out of our LM approach to narrow down those DMRs that separate well ACS groups
+narrow_DMR<-readRDS("/local/rcuadrat/cfdna_wgbs/narrow_DMRs.RDS") %>% 
+    tidyr::separate(col = DMR, into = c("chr", "start", "end"), sep = "\\.", remove = FALSE) %>% 
+    GenomicRanges::makeGRangesFromDataFrame(seqnames.field = "chr", start.field = "start", end.field = "end", keep.extra.columns = TRUE)
+```
+
+Define sample names and treatment
+```{r Define_samples}
+sample_ids_v_no_cad = c('2017',
+                        '2018',
+                        '2019',
+                        '2026',
+                        '2027',
+                        '2033',
+                        '3052',
+                        '3131',
+                        '3158',
+                        'SK',
+                        'VF')
+
+groups_v_no_cad = c(1, 1, 2, 3, 3, 2, 1, 2, 1, 0, 0)
+groups_v_no_cad_names = c(
+    "STEMI",
+    "STEMI",
+    "NSTEMI",
+    "UA",
+    "UA",
+    "NSTEMI",
+    "STEMI",
+    "NSTEMI",
+    "STEMI",
+    "Control",
+    "Control"
+)
+
+sample_ids_no_cad = c(
+    'N1',
+    'N2',
+    'N3',
+    'N4',
+    'N5',
+    'N6',
+    'H26',
+    'H28',
+    # control
+    'AC1',
+    'AC2',
+    'AC3',
+    'AC4',
+    'AC5',
+    'AC6',
+    'AC14',
+    'AC15',
+    #stemi
+    'AC7',
+    'AC8',
+    'AC9',
+    'AC10',
+    'AC11',
+    'AC12',
+    'AC13',
+    # nstemi
+    'AP1',
+    'AP2',
+    'AP3',
+    'AP4',
+    'AP5',
+    'AP6'
+) #Acs/iAP
+
+treatment_no_cad = c(rep(0, 8),  # control
+                     rep(1, 8), #stemi
+                     rep(2, 7),  # nstemi
+                     rep(3, 6) #Acs/iAP
+                     )
+treatment_no_cad_names = c(rep("Control", 8),
+                           # control
+                           rep("STEMI", 8),
+                           #stemi
+                           rep("NSTEMI", 7),
+                           # nstemi
+                           rep("UA", 6)
+                           #Acs/iAP
+                           )
+                           
+batches = c(rep("validation", length(sample_ids_v_no_cad)), rep("discovery", length(sample_ids_no_cad)))
+all_metadata <- data.frame(
+    sample_id = c(sample_ids_v_no_cad, sample_ids_no_cad),
+    condition = as.factor(c(groups_v_no_cad_names, treatment_no_cad_names)),
+    batch = batches,
+    condition_group = c(groups_v_no_cad, treatment_no_cad)
+)
+```
+
+```{r Load_methylation_data}
+#Get all methylation values for all united tiles
+methylBaseDB_validation_no_CAD <- readRDS("/local/rcuadrat/data_for_altuna/methylBaseDB_validation_no_CAD.RDS")
+methylBaseDB_WGBS_all_samples <- readRDS("/local/rcuadrat/data_for_altuna/methylBaseDB_WGBS_all_samples.RDS")
+
+#Load batch corrected methylation matrix including only top dmrs
+condition_DM_perc_meth_pca <- readRDS("/local/AAkalin_cardiac/Results/cardiac/RDS/condition_DM_perc_meth_pca.RDS")
+
+# Get methylation percentages of DMRs for WGBS Samples
+DMR_percMeth_discovery <- methylBaseDB_WGBS_all_samples %>%
+    selectByOverlap(ranges = narrow_DMR) %>%
+    percMethylation(rowids = TRUE) %>%
+    as_tibble(rownames = "tile")
+
+#Get batch corrected methylation percentages of DMRs for target Samples
+DMR_percMeth_validation <- condition_DM_perc_meth_pca %>% 
+    pivot_longer(cols = starts_with("chr"), names_to = "tile", values_to = "value") %>%
+    pivot_wider(id_cols = tile,names_from = sample_ids, values_from = value)
+
+DMR_percMeth_validation_df <- DMR_percMeth_validation %>% 
+    column_to_rownames("tile") %>% 
+    t() %>% 
+    as_tibble(rownames = "sample_id")
+
+```
+
+```{r}
+discovery_metadata <- all_metadata %>% 
+    dplyr::filter(batch == "discovery")
+
+validation_metadata <- all_metadata %>% 
+    dplyr::filter(batch == "validation")
+
+all_metadata_disease <- all_metadata %>% 
+    filter(condition_group != 0) %>% 
+    droplevels(.)
+
+discovery_metadata_disease <- discovery_metadata %>% 
+    filter(condition_group != 0) %>% 
+    droplevels(.)
+    
+validation_metadata_disease <- validation_metadata %>% 
+    filter(condition_group != 0) %>% 
+    droplevels(.)
+```
+
+```{r}
+gplots::venn(list(discovery = DMR_percMeth_discovery$tile, 
+             validation = DMR_percMeth_validation$tile))
+```
+
+
+## PCA of narrow DMRs on discovery cohort
+
+```{r }
+
+discovery_DMR_percMeth_df <- DMR_percMeth_discovery %>% 
+  dplyr::filter(tile %in% narrow_DMR$DMR) %>%
+  # dplyr::filter(!grepl(pattern = "chrX|Y",tile)) %>%  
+  tidyr::pivot_longer(-tile, names_to = "sample_id", values_to = "perc_meth") %>% 
+  tidyr::pivot_wider( names_from = "tile", values_from="perc_meth") %>%  
+    inner_join(discovery_metadata %>% 
+                     dplyr::select(sample_id, condition) , by = "sample_id") %>%
+    # dplyr::filter(!condition == "Control") %>%
+    column_to_rownames("sample_id") %>% 
+    dplyr::select(!tidyselect::where( ~ is.numeric(.x) && mean(.x) == 0 ))
+
+discovery_DMR_percMeth_prcomp <-discovery_DMR_percMeth_df %>% 
+     dplyr::select(., starts_with("chr")) %>% 
+     prcomp(center = TRUE, scale. = TRUE,)
+
+#With ACS controls (same as for discovery)
+PCA_narrow_DMRs_discovery <- discovery_DMR_percMeth_df%>%
+  autoplot(prcomp(dplyr::select(.,starts_with("chr")), center = TRUE, scale. = TRUE), data = ., colour="condition", size=3, label=FALSE) +
+  labs(colour="Condition", face="bold", title="Narrow DMRs discovery Samples") +
+  # scale_colour_manual(values = c("#A6D854", "#FFD92F","#66C2A5"))+
+  theme_Publication()+
+  theme(legend.position = "right", 
+        legend.direction = "vertical", 
+        aspect.ratio = 1)
+PCA_narrow_DMRs_discovery
+```
+
+### Heatmap of narrow DMRs on discovery cohort
+
+```{r}
+discovery_DMR_percMeth_df %>% 
+     dplyr::select(., starts_with("chr")) %>%
+    pheatmap::pheatmap(show_colnames = FALSE, 
+                       annotation_row = all_metadata %>% 
+                        dplyr::select(sample_id, condition) %>% 
+                           column_to_rownames("sample_id"))
+
+```
+
+### Correlation of narrow DMRs on discovery cohort
+
+```{r}
+discovery_DMR_percMeth_df %>% 
+     dplyr::select(., starts_with("chr")) %>%
+    cor() %>% 
+    pheatmap::pheatmap(show_colnames = FALSE, 
+                       show_rownames = FALSE)
+
+```
+
+```{r}
+validation_DMR_percMeth_df <- DMR_percMeth_validation %>% 
+  dplyr::filter(tile %in% narrow_DMR$DMR) %>%
+    # dplyr::filter(!grepl(pattern = "chrX|Y",tile)) %>%  
+  tidyr::pivot_longer(-tile, names_to = "sample_id", values_to = "perc_meth") %>% 
+  tidyr::pivot_wider( names_from = "tile", values_from="perc_meth") %>%  
+    inner_join(validation_metadata%>% 
+                     dplyr::select(sample_id, condition) , by = "sample_id") %>%
+    column_to_rownames("sample_id") %>% 
+    dplyr::select(!tidyselect::where( ~ is.numeric(.x) && mean(.x) == 0 ))
+```
+
+
+### PCA on batch corrected samples
+
+```{r}
+condition_DM_perc_meth_pca %>%dplyr::mutate(condition = if_else(condition == "Control", "Healthy", condition)) %>%
+  autoplot(prcomp(dplyr::select(.,starts_with("chr"))), data = ., shape = "seq_method", colour="condition", size=3) +
+  # labs(title = "Backtransformed, Quantile Normalised and ComBat\nBetween Disease DM Tiles",
+  labs(shape="Sequencing \nmethod", colour="Condition", face="bold") +
+  scale_colour_manual(values = c("#ef3b2c","#f87f01","#386cb0","#7fc97f"))+
+  theme_Publication()+
+  theme(legend.position = "right", 
+        legend.direction = "vertical", 
+        aspect.ratio = 1)+
+  scale_y_continuous(breaks=c(-0.3, -0.2, -0.1, 0, 0.1, 0.2))+
+  scale_x_continuous(breaks=c(-0.3, -0.2, -0.1, 0, 0.1, 0.2))
+
+```
+
+
+
+## Top DMRs on Random Forest
+
+### Train
+
+```{r}
+library(caret)
+
+all_narrow_dmrs <- intersect(narrow_DMR$DMR,intersect(names(discovery_DMR_percMeth_df), names(validation_DMR_percMeth_df) ))
+
+set.seed(3456)
+trainIndex <- createDataPartition(discovery_DMR_percMeth_df$condition, p = .6, 
+                                  list = FALSE, 
+                                  times = 1)
+
+set.seed(123)
+train_df <- discovery_DMR_percMeth_df %>%
+    dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
+    dplyr::slice(trainIndex) %>%
+    droplevels()
+
+test_df <- discovery_DMR_percMeth_df %>%
+    dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
+    dplyr::slice(-trainIndex) %>%
+    droplevels()
+
+# test_df <- validation_DMR_percMeth_df %>%
+#     dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
+#     # dplyr::filter(!condition == "Control") %>%
+#     droplevels()
+
+# control parameters
+objControl <- trainControl(#method = "cv", 
+                           method="repeatedcv", 
+                           # number=10, 
+                           repeats=3,
+                           number = 5, 
+                           returnResamp = 'none', 
+                           # summaryFunction = twoClassSummary,
+                           classProbs = TRUE,
+                           savePredictions = TRUE)
+
+
+rf_model <-  train(condition ~ .,
+                  data = train_df,
+                  method = "rf", 
+                  trControl = objControl,
+                  trace = FALSE, 
+                  preProcess=c("center", "scale"),
+                  intercept = FALSE)
+
+rf_model
+```
+```{r}
+varImp(rf_model)
+```
+
+
+### Test
+
+We perform classification on the test data.
+
+```{r}
+
+rf_pred <- predict.train(rf_model,newdata = test_df)
+rf_prob <- predict.train(rf_model,newdata = test_df, type = "prob")
+
+confusionMatrix(rf_pred, as.factor(test_df$condition))
+```
+
+### Validate
+
+We perform classification on the validation data.
+
+```{r}
+
+# set.seed(123)
+# train_df <- discovery_DMR_percMeth_df %>%
+#     dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
+#     droplevels()
+
+validation_df <- validation_DMR_percMeth_df %>%
+    dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
+    # { .[all_narrow_dmrs[!all_narrow_dmrs %in% colnames(.)]] <- 0; .  } %>% 
+    droplevels()
+
+# test_df <- validation_DMR_percMeth_df %>%
+#     dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
+#     # dplyr::filter(!condition == "Control") %>%
+#     droplevels()
+
+# # control parameters
+# objControl <- trainControl(#method = "cv", 
+#                            method="repeatedcv", 
+#                            # number=10, 
+#                            repeats=3,
+#                            number = 5, 
+#                            returnResamp = 'none', 
+#                            # summaryFunction = twoClassSummary,
+#                            classProbs = TRUE,
+#                            savePredictions = TRUE)
+# 
+# 
+# rf_model <-  train(condition ~ .,
+#                   data = train_df,
+#                   method = "rf", 
+#                   trControl = objControl,
+#                   trace = FALSE, 
+#                   # preProcess=c("center", "scale", "nzv"),
+#                   intercept = FALSE)
+# 
+# rf_model
+
+rf_pred <- predict(rf_model,newdata = validation_df)
+rf_prob <- predict.train(rf_model,newdata = validation_df, type = "prob")
+
+confusionMatrix(rf_pred, as.factor(validation_df$condition))
+```
+
+### PCA Validation
+
+```{r}
+# PCA with controls
+validation_DMR_percMeth_df %>%
+  dplyr::select(any_of(all_narrow_dmrs)) %>%
+  tibble::rownames_to_column("sample_id") %>% 
+  dplyr::inner_join(validation_metadata, by = "sample_id") %>%
+  # dplyr::filter(!condition == "Control") %>%
+  dplyr::select(! dplyr::select(., starts_with("chr")) %>% nearZeroVar(names = TRUE) ) %>% 
+  droplevels() %>% 
+  dplyr::mutate(prediction = rf_pred) %>% {
+  autoplot(prcomp(dplyr::select(., starts_with("chr")),center = TRUE, scale. = TRUE), data=., colour="condition",  size=3)+
+  # geom_text(aes(label = sample_id)) +
+  geom_point(shape = if_else(.$prediction == .$condition, 1, 4),  size  = 3) +
+  labs(title = "Prediction on Validation Data",
+        caption = paste("n(DMRs)=", ncol(dplyr::select(., starts_with("chr"))),
+                        ", Method = Random Forest")) +
+  # scale_colour_manual(values = c("#A6D854", "#FFD92F","#66C2A5"))+
+  theme_Publication()+
+  theme(legend.position = "right", 
+        legend.direction = "vertical", 
+        aspect.ratio = 1)
+  }
+```
+
+
+
+## Top DMRs on Partial least squares regression 
+
+### Train
+
+```{r}
+library(caret)
+
+all_narrow_dmrs <- intersect(narrow_DMR$DMR,intersect(names(discovery_DMR_percMeth_df), names(validation_DMR_percMeth_df) ))
+
+set.seed(3456)
+trainIndex <- createDataPartition(discovery_DMR_percMeth_df$condition, p = .6, 
+                                  list = FALSE, 
+                                  times = 1)
+
+set.seed(123)
+train_df <- discovery_DMR_percMeth_df %>%
+    dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
+    dplyr::slice(trainIndex) %>%
+    droplevels()
+
+test_df <- discovery_DMR_percMeth_df %>%
+    dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
+    dplyr::slice(-trainIndex) %>%
+    droplevels()
+
+# test_df <- validation_DMR_percMeth_df %>%
+#     dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
+#     # dplyr::filter(!condition == "Control") %>%
+#     droplevels()
+
+# control parameters
+objControl <- trainControl(#method = "cv", 
+                           method="repeatedcv", 
+                           # number=10, 
+                           repeats=3,
+                           number = 5, 
+                           returnResamp = 'none', 
+                           # summaryFunction = twoClassSummary,
+                           classProbs = TRUE,
+                           savePredictions = TRUE)
+
+
+pls_model <-  train(condition ~ .,
+                  data = train_df,
+                  method = "pls", 
+                  trControl = objControl,
+                  trace = FALSE, 
+                  preProcess=c("center", "scale"),
+                  intercept = FALSE)
+
+pls_model
+```
+
+```{r}
+varImp(pls_model) #%>% { .$importance } %>% arrange(-Overall) 
+```
+
+
+### Test
+
+We perform classification on the test data.
+
+```{r}
+
+pls_pred <- predict.train(pls_model,newdata = test_df)
+pls_prob <- predict.train(pls_model,newdata = test_df, type = "prob")
+
+confusionMatrix(pls_pred, as.factor(test_df$condition))
+```
+
+### Validate
+
+We perform classification on the validation data.
+
+```{r}
+
+# set.seed(123)
+# train_df <- discovery_DMR_percMeth_df %>%
+#     dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
+#     droplevels()
+
+validation_df <- validation_DMR_percMeth_df %>%
+    dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
+    # { .[all_narrow_dmrs[!all_narrow_dmrs %in% colnames(.)]] <- 0; .  } %>% 
+    droplevels()
+
+# test_df <- validation_DMR_percMeth_df %>%
+#     dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
+#     # dplyr::filter(!condition == "Control") %>%
+#     droplevels()
+
+# # control parameters
+# objControl <- trainControl(#method = "cv", 
+#                            method="repeatedcv", 
+#                            # number=10, 
+#                            repeats=3,
+#                            number = 5, 
+#                            returnResamp = 'none', 
+#                            # summaryFunction = twoClassSummary,
+#                            classProbs = TRUE,
+#                            savePredictions = TRUE)
+# 
+# 
+# pls_model <-  train(condition ~ .,
+#                   data = train_df,
+#                   method = "rf", 
+#                   trControl = objControl,
+#                   trace = FALSE, 
+#                   # preProcess=c("center", "scale", "nzv"),
+#                   intercept = FALSE)
+# 
+# pls_model
+
+pls_pred <- predict(pls_model,newdata = validation_df)
+pls_prob <- predict.train(pls_model,newdata = validation_df, type = "prob")
+
+confusionMatrix(pls_pred, as.factor(validation_df$condition))
+```
+
+### PCA Validation
+
+```{r}
+# PCA with controls
+validation_DMR_percMeth_df %>%
+  dplyr::select(any_of(all_narrow_dmrs)) %>%
+  tibble::rownames_to_column("sample_id") %>% 
+  dplyr::inner_join(validation_metadata, by = "sample_id") %>%
+  # dplyr::filter(!condition == "Control") %>%
+  dplyr::select(! dplyr::select(., starts_with("chr")) %>% nearZeroVar(names = TRUE) ) %>% 
+  droplevels() %>% 
+  dplyr::mutate(prediction = pls_pred) %>% {
+  autoplot(prcomp(dplyr::select(., starts_with("chr")),center = TRUE, scale. = TRUE), data=., colour="condition",  size=3)+
+  # geom_text(aes(label = sample_id)) +
+  geom_point(shape = if_else(.$prediction == .$condition, 1, 4),  size  = 3) +
+  labs(title = "Prediction on Validation Data",
+        caption = paste("n(DMRs)=", ncol(dplyr::select(., starts_with("chr"))),
+                        ", Method = Partial Least Squares")) +
+  # scale_colour_manual(values = c("#A6D854", "#FFD92F","#66C2A5"))+
+  theme_Publication()+
+  theme(legend.position = "right", 
+        legend.direction = "vertical", 
+        aspect.ratio = 1)
+  }
+```
+
+
+
+
+## Top DMRs on Penalized Multinomial Regression 
+ 
+### Train
+
+```{r}
+library(caret)
+
+all_narrow_dmrs <- intersect(narrow_DMR$DMR,intersect(names(discovery_DMR_percMeth_df), names(validation_DMR_percMeth_df) ))
+
+set.seed(3456)
+trainIndex <- createDataPartition(discovery_DMR_percMeth_df$condition, p = .6, 
+                                  list = FALSE, 
+                                  times = 1)
+
+set.seed(123)
+train_df <- discovery_DMR_percMeth_df %>%
+    dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
+    dplyr::slice(trainIndex) %>%
+    droplevels()
+
+test_df <- discovery_DMR_percMeth_df %>%
+    dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
+    dplyr::slice(-trainIndex) %>%
+    droplevels()
+
+# test_df <- validation_DMR_percMeth_df %>%
+#     dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
+#     # dplyr::filter(!condition == "Control") %>%
+#     droplevels()
+
+# control parameters
+objControl <- trainControl(#method = "cv", 
+                           method="repeatedcv", 
+                           # number=10, 
+                           repeats=3,
+                           number = 5, 
+                           returnResamp = 'none', 
+                           # summaryFunction = twoClassSummary,
+                           classProbs = TRUE,
+                           savePredictions = TRUE)
+
+
+pmr_model <-  train(condition ~ .,
+                  data = train_df,
+                  method = "multinom", 
+                  trControl = objControl,
+                  trace = FALSE, 
+                  # preProcess=c("center", "scale", "nzv"),
+                  intercept = FALSE)
+
+pmr_model
+```
+
+```{r}
+varImp(pmr_model) #%>% { .$importance } %>% arrange(-Overall) 
+```
+
+
+### Test
+
+We perform classification on the test data.
+
+```{r}
+
+pmr_pred <- predict.train(pmr_model,newdata = test_df)
+pmr_prob <- predict.train(pmr_model,newdata = test_df, type = "prob")
+
+confusionMatrix(pmr_pred, as.factor(test_df$condition))
+```
+
+### Validate
+
+We perform classification on the validation data.
+
+```{r}
+
+# set.seed(123)
+# train_df <- discovery_DMR_percMeth_df %>%
+#     dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
+#     droplevels()
+
+validation_df <- validation_DMR_percMeth_df %>%
+    dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
+    # { .[all_narrow_dmrs[!all_narrow_dmrs %in% colnames(.)]] <- 0; .  } %>% 
+    droplevels()
+
+# test_df <- validation_DMR_percMeth_df %>%
+#     dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
+#     # dplyr::filter(!condition == "Control") %>%
+#     droplevels()
+
+# # control parameters
+# objControl <- trainControl(#method = "cv", 
+#                            method="repeatedcv", 
+#                            # number=10, 
+#                            repeats=3,
+#                            number = 5, 
+#                            returnResamp = 'none', 
+#                            # summaryFunction = twoClassSummary,
+#                            classProbs = TRUE,
+#                            savePredictions = TRUE)
+# 
+# 
+# pmr_model <-  train(condition ~ .,
+#                   data = train_df,
+#                   method = "rf", 
+#                   trControl = objControl,
+#                   trace = FALSE, 
+#                   # preProcess=c("center", "scale", "nzv"),
+#                   intercept = FALSE)
+# 
+# pmr_model
+
+pmr_pred <- predict(pmr_model,newdata = validation_df)
+pmr_prob <- predict.train(pmr_model,newdata = validation_df, type = "prob")
+
+confusionMatrix(pmr_pred, as.factor(validation_df$condition))
+```
+
+### PCA Validation
+
+```{r}
+# PCA with controls
+validation_DMR_percMeth_df %>%
+  dplyr::select(any_of(all_narrow_dmrs)) %>%
+  tibble::rownames_to_column("sample_id") %>% 
+  dplyr::inner_join(validation_metadata, by = "sample_id") %>%
+  # dplyr::filter(!condition == "Control") %>%
+  dplyr::select(! dplyr::select(., starts_with("chr")) %>% nearZeroVar(names = TRUE) ) %>% 
+  droplevels() %>% 
+  dplyr::mutate(prediction = pmr_pred) %>% {
+  autoplot(prcomp(dplyr::select(., starts_with("chr")),center = TRUE, scale. = TRUE), data=., colour="condition",  size=3)+
+  # geom_text(aes(label = sample_id)) +
+  geom_point(shape = if_else(.$prediction == .$condition, 1, 4),  size  = 3) +
+  labs(title = "Prediction on Validation Data",
+        caption = paste("n(DMRs)=", ncol(dplyr::select(., starts_with("chr"))),
+                        ", Method = Penalized Multinomial Regression")) +
+  # scale_colour_manual(values = c("#A6D854", "#FFD92F","#66C2A5"))+
+  theme_Publication()+
+  theme(legend.position = "right", 
+        legend.direction = "vertical", 
+        aspect.ratio = 1)
+  }
+```
+
+
+
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+
