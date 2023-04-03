@@ -1086,6 +1086,8 @@ overlap_log_normalised_combat_no_log <- overlap_log_normalised_combat %>%
   pivot_longer(-tiles, names_to = "sample_ids", values_to = "perc_meth") %>%
   mutate(across("sample_ids", str_replace, "_perc_meth", "")) %>%
   left_join(metadata %>% dplyr::select(sample_ids, condition, seq_method), by = "sample_ids")
+
+saveRDS(overlap_log_normalised_combat_no_log, "/local/AAkalin_cardiac/Results/cardiac/RDS/overlap_log_normalised_combat_no_log.RDS")
 ```
 
 #### Plot %Methylation per condition group
@@ -1434,6 +1436,8 @@ condition_DM_perc_meth <- overlap_log_normalised_combat_no_log %>% dplyr::filter
 
 condition_DM_perc_meth_pca <- condition_DM_perc_meth %>%  
   tidyr::pivot_wider(values_from=perc_meth, names_from=tiles)
+
+saveRDS(condition_DM_perc_meth_pca, "/local/AAkalin_cardiac/Results/cardiac/RDS/condition_DM_perc_meth_pca.RDS")
 
 
 p67 <- condition_DM_perc_meth_pca %>%
