@@ -10,6 +10,7 @@ The goal of this script is to predict the cell/tissue-type proportions via NNLS 
 ```{r Load_libraries}
 library(tidyverse)
 library(deconvR)
+library(scales)
 ```
 
 # Read in Data
@@ -118,6 +119,11 @@ theme_Publication <- function(base_size=14, base_family="sans") {
        ))
       
 }
+
+scale_fill_Publication <- function(...) {
+  library(scales)
+  discrete_scale("fill", "Publication", manual_pal(values = c("#386cb0", "#f87f01", "#7fc97f", "#ef3b2c", "#feca01", "#a6cee3", "#fb9a99", "#984ea3", "#8C591D")), ...)
+}
 ```
 
 Make metadata table
@@ -203,6 +209,8 @@ Prediction of cell-type proportions of bulk methylation profiles, as well as par
 meth.deT@treatment=treatment1
 mapping = deconvR::BSmeth2Probe(probe_id_locations = probes, WGBS_data = meth.deT)
 
+names(refExtended)[1] <- "IDs"
+names(mapping)[1] <- "IDs"
 
 decon_nnls_extended = deconvR::deconvolute(reference=refExtended, bulk=mapping, model="nnls")
 
@@ -237,7 +245,7 @@ decon_nnls_extended_tgs.m$treatment_descr <-str_replace(decon_nnls_extended_tgs.
 decon_nnls_extended_tgs.m$treatment_descr <-str_replace(decon_nnls_extended_tgs.m$treatment_descr,"3","UA")
 decon_nnls_extended_tgs.m$treatment_descr <- factor(decon_nnls_extended_tgs.m$treatment_descr , levels=c("Stemi", "Nstemi", "UA","Healthy"))
 
-saveRDS(decon_nnls_extended_tgs.m,"../Results/cardiac/RDS/decon_cell_proportions.RDS")
+#saveRDS(decon_nnls_extended_tgs.m,"../Results/cardiac/RDS/decon_cell_proportions.RDS")
 ```
 
 Export raw cell proportion values
@@ -442,10 +450,10 @@ bp_decon_nnls_extended <- ggplot2::ggplot(decon_nnls_extended_tgs.m_short, ggplo
 bp_decon_nnls_extended + ggplot2::theme(legend.text=element_text(size=14),axis.text.x = ggplot2::element_text(size=14), axis.text.y = ggplot2::element_text(size=14),plot.title = ggplot2::element_text(size=20)) + ggplot2::labs(fill="Treatment",x = "Cell Type", y = "Proportion of Sample") + coord_flip()
 
 
-ggsave(
-  "../Results/cardiac/Plots/Figure2.pdf",
-  device = "pdf",
-  plot = last_plot())
+# ggsave(
+#   "../Results/cardiac/Plots/Figure2.pdf",
+#   device = "pdf",
+#   plot = last_plot())
 ```
 
 ```{r Previous_plot_without_theme}

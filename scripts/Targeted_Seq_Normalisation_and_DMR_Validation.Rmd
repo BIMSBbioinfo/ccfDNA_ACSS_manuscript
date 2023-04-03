@@ -82,6 +82,20 @@ methylDiff_validation<- readRDS(file= "/local/rcuadrat/data_for_altuna/methylDif
 
 methylDiff_WGBS <- methylDiff_WGBS[1:3]
 names(methylDiff_WGBS)<-c("STEMI", "NSTEMI", "UA")
+
+#Export significant methylation percentages for Supplementary Table 5
+##########
+methylDiff_WGBS_exp <- methylDiff_WGBS %>%
+  map2(names(.), ~ as_tibble(.x) %>% 
+                   tidyr::unite(tiles, seqnames, start, end, sep=".") %>% 
+                   add_column(condition=.y)) %>% 
+  bind_rows()
+
+meth_perc_all_tiles_WGBS_exp <- meth_perc_all_tiles_WGBS %>% 
+  dplyr::filter(rownames(.) %in% methylDiff_WGBS_exp$tiles)
+
+write_tsv(meth_perc_all_tiles_WGBS_exp, file = "/local/AAkalin_cardiac/metadata/Supplementary_Table_5_Methylation_Percentages_Significant_DMRs.tsv")
+##########
 methylDiff_WGBS <- methylDiff_WGBS %>% map2(names(.), ~ as_tibble(.x) %>% 
                                               add_column(condition=.y) %>% 
                                               tidyr::unite(tiles, seqnames, start, end, condition, sep="."))
@@ -96,20 +110,6 @@ suppl_tbl_2 <- readRDS("/local/rcuadrat/cfdna_wgbs/suppl_tbl_2.RDS")
 clinical_markers<-merge(suppl_tbl_2,clinical_markers,by="Sample")
 #clinical_markers = clinical_markers %>% rename("CRP (mg/dl)"="CRP(mg/dl_<5)","TroponinT (ng/l)"="TroponinThs_t1 (ng/l <14or<50)","CK (U/l)"="CK (U/l _<190)","CK max (U/l)"="CKmax(U/l_<190)","CK-MB (U/l)"="CK-MB(U/l <24)","CK-MB max (U/l)"="CK-MB_Max")
 clinical_markers_ACS<-clinical_markers %>% filter(treatment !=0)
-
-#Export significant methylation values for Supplementary Table 5
-methylDiff_WGBS_exp <- methylDiff_WGBS %>%
-  map(~ tidyr::separate(., tiles, into = c("Chromosome", "Start", "End", "Condition")) %>%
-    dplyr::rename(
-      "Width" = width,
-      "Strand" = strand,
-      "p-value" = pvalue,
-      "q-value" = qvalue,
-      "Methylation difference" = meth.diff
-    )) %>% 
-  bind_rows()
-
-write_tsv(methylDiff_WGBS_exp, file = "/local/AAkalin_cardiac/metadata/Supplementary_Table_5_Significant_DMRs.tsv")
 ```
 
 ## Analysis
