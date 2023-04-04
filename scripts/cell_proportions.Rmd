@@ -609,7 +609,7 @@ df_Figure_2 <- decon_nnls_extended_all_short_even_shorter %>%
 
 stats_df_Figure_2 <- df_Figure_2 %>%
   group_by(cell_type) %>%
-  wilcox_test(value ~ treatment_descr) %>% 
+  wilcox_test(value ~ treatment_descr, p.adjust.method = "none") %>% 
   # t_test(value ~ treatment_descr) %>% 
   # adjust_pvalue(method = "holm") %>%
   add_significance() %>% 
@@ -685,7 +685,7 @@ df_Supplementary_Figure_S6 <- decon_nnls_extended_all_short_even_shorter %>%
 
 stats_df_Supplementary_Figure_S6 <- df_Supplementary_Figure_S6 %>%
   group_by(cell_type) %>%
-  wilcox_test(value ~ treatment_descr) %>% 
+  wilcox_test(value ~ treatment_descr, p.adjust.method = "none") %>% 
   # t_test(value ~ treatment_descr) %>% 
   # adjust_pvalue(method = "holm") %>%
   add_significance() %>% 
