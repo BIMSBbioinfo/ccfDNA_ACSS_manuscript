@@ -80,8 +80,12 @@ library(ggfortify)
 library(ggthemes)
 library(tidyverse)
 library(caret)
+library(MLmetrics)
+library(MLeval)
+library(cowplot)
 library(preprocessCore)
 library(sva)
+library(doParallel)
 ```
 
 # Load Data
@@ -317,22 +321,24 @@ condition_DM_perc_meth_pca %>%dplyr::mutate(condition = if_else(condition == "Co
 ```
 
 
+# Building Models 
 
-## Top DMRs on Random Forest
-
-### Train
+## Split Data 
 
 ```{r}
+# Set up to do parallel processing   
+registerDoParallel(4)		# Registrer a parallel backend for train
+getDoParWorkers()
+
 library(caret)
 
 all_narrow_dmrs <- intersect(narrow_DMR$DMR,intersect(names(discovery_DMR_percMeth_df), names(validation_DMR_percMeth_df) ))
 
 set.seed(3456)
-trainIndex <- createDataPartition(discovery_DMR_percMeth_df$condition, p = .6, 
-                                  list = FALSE, 
+trainIndex <- createDataPartition(discovery_DMR_percMeth_df$condition, p =.7, 
+                                  list = FALSE,
                                   times = 1)
 
-set.seed(123)
 train_df <- discovery_DMR_percMeth_df %>%
     dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
     dplyr::slice(trainIndex) %>%
@@ -350,26 +356,36 @@ test_df <- discovery_DMR_percMeth_df %>%
 
 # control parameters
 objControl <- trainControl(#method = "cv", 
-                           method="repeatedcv", 
+                           method="repeatedcv",
                            # number=10, 
-                           repeats=3,
-                           number = 5, 
-                           returnResamp = 'none', 
-                           # summaryFunction = twoClassSummary,
+                           number = 10,
+                           repeats = 10,
+                           returnResamp = 'final',
+                           summaryFunction = multiClassSummary,
+                           selectionFunction = "best",
+                           allowParallel = TRUE,
                            classProbs = TRUE,
                            savePredictions = TRUE)
+```
 
+## Top DMRs on Random Forest
 
+### Train
+
+```{r}
+set.seed(123)
 rf_model <-  train(condition ~ .,
                   data = train_df,
                   method = "rf", 
                   trControl = objControl,
                   trace = FALSE, 
                   preProcess=c("center", "scale"),
+                  metric = "AUC",
                   intercept = FALSE)
 
 rf_model
 ```
+
 ```{r}
 varImp(rf_model)
 ```
@@ -469,49 +485,14 @@ validation_DMR_percMeth_df %>%
 ### Train
 
 ```{r}
-library(caret)
-
-all_narrow_dmrs <- intersect(narrow_DMR$DMR,intersect(names(discovery_DMR_percMeth_df), names(validation_DMR_percMeth_df) ))
-
-set.seed(3456)
-trainIndex <- createDataPartition(discovery_DMR_percMeth_df$condition, p = .6, 
-                                  list = FALSE, 
-                                  times = 1)
-
 set.seed(123)
-train_df <- discovery_DMR_percMeth_df %>%
-    dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
-    dplyr::slice(trainIndex) %>%
-    droplevels()
-
-test_df <- discovery_DMR_percMeth_df %>%
-    dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
-    dplyr::slice(-trainIndex) %>%
-    droplevels()
-
-# test_df <- validation_DMR_percMeth_df %>%
-#     dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
-#     # dplyr::filter(!condition == "Control") %>%
-#     droplevels()
-
-# control parameters
-objControl <- trainControl(#method = "cv", 
-                           method="repeatedcv", 
-                           # number=10, 
-                           repeats=3,
-                           number = 5, 
-                           returnResamp = 'none', 
-                           # summaryFunction = twoClassSummary,
-                           classProbs = TRUE,
-                           savePredictions = TRUE)
-
-
 pls_model <-  train(condition ~ .,
                   data = train_df,
                   method = "pls", 
                   trControl = objControl,
                   trace = FALSE, 
                   preProcess=c("center", "scale"),
+                  metric = "AUC",
                   intercept = FALSE)
 
 pls_model
@@ -617,49 +598,14 @@ validation_DMR_percMeth_df %>%
 ### Train
 
 ```{r}
-library(caret)
-
-all_narrow_dmrs <- intersect(narrow_DMR$DMR,intersect(names(discovery_DMR_percMeth_df), names(validation_DMR_percMeth_df) ))
-
-set.seed(3456)
-trainIndex <- createDataPartition(discovery_DMR_percMeth_df$condition, p = .6, 
-                                  list = FALSE, 
-                                  times = 1)
-
 set.seed(123)
-train_df <- discovery_DMR_percMeth_df %>%
-    dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
-    dplyr::slice(trainIndex) %>%
-    droplevels()
-
-test_df <- discovery_DMR_percMeth_df %>%
-    dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
-    dplyr::slice(-trainIndex) %>%
-    droplevels()
-
-# test_df <- validation_DMR_percMeth_df %>%
-#     dplyr::select(any_of(all_narrow_dmrs), "condition") %>%
-#     # dplyr::filter(!condition == "Control") %>%
-#     droplevels()
-
-# control parameters
-objControl <- trainControl(#method = "cv", 
-                           method="repeatedcv", 
-                           # number=10, 
-                           repeats=3,
-                           number = 5, 
-                           returnResamp = 'none', 
-                           # summaryFunction = twoClassSummary,
-                           classProbs = TRUE,
-                           savePredictions = TRUE)
-
-
 pmr_model <-  train(condition ~ .,
                   data = train_df,
                   method = "multinom", 
                   trControl = objControl,
                   trace = FALSE, 
-                  # preProcess=c("center", "scale", "nzv"),
+                  preProcess=c("center", "scale"),
+                  metric = "AUC",
                   intercept = FALSE)
 
 pmr_model
@@ -758,6 +704,110 @@ validation_DMR_percMeth_df %>%
 ```
 
 
+# Compare Models 
+
+see https://topepo.github.io/caret/model-training-and-tuning.html#between-models
+
+
+```{r}
+
+resamps <- resamples(list(RF = rf_model,
+                          PLS = pls_model,
+                          PMR = pmr_model))
+resamps
+
+```
+
+## Summary
+
+```{r}
+summary(resamps)
+```
+
+## Plot Resampling Metrics
+
+```{r}
+theme1 <- trellis.par.get()
+theme1$plot.symbol$col = rgb(.2, .2, .2, .4)
+theme1$plot.symbol$pch = 16
+theme1$plot.line$col = rgb(1, 0, 0, .7)
+theme1$plot.line$lwd <- 2
+trellis.par.set(theme1)
+bwplot(resamps, layout = c(3, 1))
+```
+
+```{r, fig.width=6, fig.height=4}
+trellis.par.set(caretTheme())
+bwplot(resamps, metric = c("Accuracy", "Kappa"), conf.level = 0.95)
+
+# pdf("/local/AAkalin_cardiac/Results/cardiac/Plots/Supplementary_Figure_MLmetrics.pdf", width=6, height=4)
+# trellis.par.set(caretTheme())
+# bwplot(resamps, metric = c("AUC","Accuracy", "Kappa"), conf.level = 0.95)
+# dev.off()
+```
+
+```{r, fig.width=6, fig.height=4}
+trellis.par.set(caretTheme())
+dotplot(resamps, metric = c("Accuracy", "Kappa"), conf.level = 0.95,)
+
+
+```
+```{r}
+trellis.par.set(theme1)
+xyplot(resamps, what = "BlandAltman")
+```
+
+```{r}
+splom(resamps, metric = "Accuracy")
+splom(resamps, metric = "Kappa")
+```
+
+```{r}
+models <- list(RF = rf_model,
+     PLS = pls_model,
+     PMR = pmr_model)
+models <- models[order(names(models))]
+
+em <- evalm(
+  models,
+  gnames = names(models),
+  rlinethick = 0.8, fsize = 12,
+  plots = "r"
+)
+
+em$roc
+```
+```{r}
+
+pdf("/local/AAkalin_cardiac/Results/cardiac/Plots/Supplementary_Figure_MLmetrics.pdf", width=8, height=5)
+trellis.par.set(caretTheme())
+dp <- dotplot(resamps, metric = c("Accuracy", "Kappa"), conf.level = 0.95)
+
+cowplot::plot_grid(dp, em$roc, ncol = 1, nrow = 2, labels = "AUTO")
+dev.off()
+
+```
+
+
+## Compare Differences between models
+
+```{r}
+difValues <- diff(resamps)
+difValues
+```
+
+```{r}
+summary(difValues)
+```
+
+```{r}
+trellis.par.set(theme1)
+bwplot(difValues, layout = c(3, 1))
+```
+```{r}
+trellis.par.set(caretTheme())
+dotplot(difValues)
+```
 
 
 # Session Info
