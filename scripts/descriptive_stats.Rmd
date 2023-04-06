@@ -282,8 +282,8 @@ Figure1C <- (corr_biomarkers * upper.tri(corr_biomarkers, diag = TRUE)) %>%
   )) +
   scale_fill_gradient(low = "White", high = "white", limits = c(-1, 1), na.value = "transparent") +
   scale_colour_gradient2(limits = c(-1, 1)) +
-  scale_size_continuous(labels = expression("">=10^{-1},"">=10^{-2},"">=10^{-3},"">=10^{-4}), breaks = c(1, 2, 3, 4)) + # c("\u2264 0.1", "\u2264 0.01", "\u2264 0.001", "\u2264 0.0001")
-  labs(colour = "Pearson's r", size = "p-value") + # "Pearson\ncoefficient"
+  scale_size_continuous(labels = expression("">=10^{-1},"">=10^{-2},"">=10^{-3},"">=10^{-4}), breaks = c(1, 2, 3, 4)) + 
+  labs(colour = "Pearson's r", size = "p-value") + 
   guides(
     fill = "none",
     colour = guide_colourbar(order = 1),
@@ -572,24 +572,15 @@ Figure_1AB <- ggarrange(Figure1A, Figure1B, ncol = 2, widths = c(1,1), align = "
 FigureABC <- ggarrange(Figure_1AB, Figure1C, nrow=2, labels=c("", "C"))
 
 ggplot2::ggsave(
+  "/local/AAkalin_cardiac/Results/cardiac/Plots/Figure1_v2.pdf",
+  plot = FigureABC, width = 210, units = "mm", height = 210
+)
+ggplot2::ggsave(
   bg = "white",
-  "/local/AAkalin_cardiac/Results/cardiac/Plots/temp_Figure1.png",
-  device = "png",
+  "/local/AAkalin_cardiac/Results/cardiac/Plots/Figure1_v2.png",
   plot = FigureABC, width = 210, units = "mm", height = 210
 )
 FigureABC
-
-#as <= unicode symbols cannot be exported by ggsave, a conversion needs to be performed
-pdf("/local/AAkalin_cardiac/Results/cardiac/Plots/Figure1.pdf")
-grid.arrange(
-  rasterGrob(
-    readPNG("/local/AAkalin_cardiac/Results/cardiac/Plots/temp_Figure1.png",
-      native = F
-    )
-  )
-)
-dev.off()
-file.remove("/local/AAkalin_cardiac/Results/cardiac/Plots/temp_Figure1.png")
 ```
 
 ```{r}
