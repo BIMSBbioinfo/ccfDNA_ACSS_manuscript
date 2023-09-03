@@ -7,8 +7,8 @@ analysis workflows that lead to data and figures of the publication
 "Cardiovascular disease biomarkers derived from circulating cell-free DNA 
 methylation". 
 
-Raw tabix (and bigwig) files are publically available for 
-discovery and validation cohort and can be downloaded via the links below. 
+Raw tabix (and bigwig) files with associated metadata are publically available for 
+discovery and validation cohort and can be downloaded via the links [below](#data-availability). 
 
 ## **Scripts**
 The main content of each script is stated below:
@@ -85,7 +85,7 @@ The main content of each script is stated below:
 
 
 ## **Data availability**
-Download links for raw **methylKit objects** (tabix format) are provided for the [discovery](data/methylKit_objects_discovery_cohort.tsv) and [validation cohort](data/methylKit_objects_validation_cohort.tsv).
+Download links for raw **methylKit objects** (tabix format) are provided for the [discovery](data/methylKit_objects_discovery_cohort.tsv) and [validation cohort](data/methylKit_objects_validation_cohort.tsv). Corresponding patient metadata are provided as tsv files for [discovery](data/PatientCharacteristics_ccfDNA_Manuscript_cfDNA_WGBS.tsv) and [validation](data/PatientCharacteristics_ccfDNA_Manuscript_cfDNA_target_validation.tsv) cohorts.
 Links to **BigWig** files are available for the [discovery cohort](data/bigwig_files_discovery_cohort.tsv).
 
 
